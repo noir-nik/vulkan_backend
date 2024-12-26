@@ -1,0 +1,26 @@
+#version 450
+#extension GL_EXT_nonuniform_qualifier : require
+
+layout(set = 0, binding = BINDING_BUFFER) buffer int_buffer {
+	int data[];
+} int_buffers[];
+
+layout (local_size_x = WORKGROUP_SIZE, local_size_y = 1, local_size_z = 1 ) in;
+
+layout(push_constant) uniform Constants {
+	uint vector_a_RID;
+	uint vector_b_RID;
+	uint vector_c_RID;
+	int vector_size;
+} ctx;
+
+#define vector_a int_buffers[ctx.vector_a_RID].data
+#define vector_b int_buffers[ctx.vector_b_RID].data
+#define vector_c int_buffers[ctx.vector_c_RID].data
+
+void main() {
+  if(gl_GlobalInvocationID.x < ctx.vector_size) {
+		uint pos = gl_GlobalInvocationID.x;
+		vector_c[pos] = vector_a[pos] + vector_b[pos];
+	}
+}
