@@ -275,11 +275,11 @@ class ResourceBase : NoCopyNoMove {
 public:
 	Owner* owner;
 	std::string name;
-	virtual void Free() = 0;
-	virtual auto GetName() -> char const* = 0;
-	virtual auto GetType() -> char const* = 0;
 	ResourceBase(Owner* owner, std::string_view const name = "") : owner(owner), name(name) {}
 	virtual ~ResourceBase() = default;
+	virtual void Free() = 0;
+	virtual auto GetType() -> char const* = 0;
+	auto GetName() -> char const* {return name.data();};
 };
 
 template <typename Owner>
@@ -298,14 +298,18 @@ struct ResourceDeleter {
 template<typename Res, typename Owner>
 requires std::is_base_of_v<std::enable_shared_from_this<Owner>, Owner> && (!std::same_as<Res, Owner>)
 auto MakeResource(Owner* owner_ptr, std::string_view const name = "") -> std::shared_ptr<Res> {
+	// Create a new resource with custom deleter
 	auto res =  std::shared_ptr<Res>(
 		new Res(owner_ptr, name),
 		ResourceDeleter{owner_ptr->weak_from_this()}
 	);
-	auto [_, success] = owner_ptr->resources.emplace(res.get());
-	VB_ASSERT(success, "Resource already exists!");
+	// Log verbose
 	VB_LOG_TRACE("[ MakeResource ] type = %s, name = \"%s\", no. = %zu owner = \"%s\"",
 		res->GetType(), name.data(), owner_ptr->resources.size(), owner_ptr->GetName());
+
+	// Add to owners set of resources
+	auto [_, success] = owner_ptr->resources.emplace(res.get());
+	VB_ASSERT(success, "Resource already exists!"); // This should never happen
 	return res;
 };
 
@@ -392,7 +396,7 @@ struct InstanceResource: NoCopyNoMove, std::enable_shared_from_this<InstanceReso
 
 	std::set<ResourceBase<InstanceResource>*> resources;
 
-	InstanceInfo initInfo;
+	InstanceInfo init_info;
 
 	void Create(InstanceInfo const& info);
 	void GetPhysicalDevices();
@@ -446,31 +450,19 @@ struct InstanceResource: NoCopyNoMove, std::enable_shared_from_this<InstanceReso
 struct QueueResource : NoCopy {
 	u32 familyIndex = ~0;
 	u32 index = 0;
-	QueueInfo initInfo;
+	QueueInfo init_info;
 	VkQueue handle = VK_NULL_HANDLE;
 	Command command;
 };
 
 struct DeviceResource : ResourceBase<InstanceResource>, std::enable_shared_from_this<DeviceResource> {
+	VkDevice         handle              = VK_NULL_HANDLE;
+	VkDescriptorPool imguiDescriptorPool = VK_NULL_HANDLE;
+	VkPipelineCache  pipelineCache       = VK_NULL_HANDLE;
+
 	PhysicalDeviceResource* physicalDevice = nullptr;
-	VkDevice                handle         = VK_NULL_HANDLE;
 
-	// bindless resources
-	VkDescriptorPool      imguiDescriptorPool      = VK_NULL_HANDLE;
-	VkDescriptorSet       bindlessDescriptorSet    = VK_NULL_HANDLE;
-	VkDescriptorPool      bindlessDescriptorPool   = VK_NULL_HANDLE;
-	VkDescriptorSetLayout bindlessDescriptorLayout = VK_NULL_HANDLE;
-
-	VkDescriptorPool      descriptorPool      = VK_NULL_HANDLE;
-	VkDescriptorSet       descriptorSet       = VK_NULL_HANDLE;
-	VkDescriptorSetLayout descriptorSetLayout = VK_NULL_HANDLE;
-
-	VkPipelineCache pipelineCache = VK_NULL_HANDLE;
-
-	// Bindless Resource IDs for descriptor indexing
-	std::vector<u32> availableBufferRID;
-	std::vector<u32> availableImageRID;
-	std::vector<u32> availableStorageImageRID;
+	Descriptor descriptor = {};
 
 	// All user-created resources owned by handle classes with
 	// std::shared_ptr<...Resource> resource member
@@ -479,10 +471,9 @@ struct DeviceResource : ResourceBase<InstanceResource>, std::enable_shared_from_
 	// Created with device and not changed
 	std::vector<QueueResource> queuesResources;
 	std::vector<Queue>         queues;
-	DeviceInfo                 initInfo;
+	DeviceInfo                 init_info;
 
 	VmaAllocator vmaAllocator;
-
 
 	struct SamplerHash {
 		auto operator()(SamplerInfo const& desc) const -> size_t {
@@ -653,23 +644,12 @@ struct DeviceResource : ResourceBase<InstanceResource>, std::enable_shared_from_
 	};
 
 	void Create(DeviceInfo const& info);
-	void Destroy();
 
-	void CreateDescriptorSetLayout();
-	void CreateDescriptorPool();
-	void CreateDescriptorSet();
-	void CreateDescriptorResources(); // ALL:pool+layout+set
-	void DestroyDescriptorResources();
-
-	void CreateBindlessDescriptorResources();
-	void DestroyBindlessDescriptorResources();
-	
 	auto CreateBuffer(BufferInfo const& info) -> Buffer;
 	auto CreateImage(ImageInfo const& info)   -> Image;
-
-	Pipeline CreatePipeline(PipelineInfo const& info);
-	VkSampler CreateSampler(SamplerInfo const& info);
-	VkSampler GetOrCreateSampler(SamplerInfo const& info = {});
+	auto CreatePipeline(PipelineInfo const& info)         -> Pipeline;
+	auto CreateSampler(SamplerInfo const& info)           -> VkSampler;
+	auto GetOrCreateSampler(SamplerInfo const& info = {}) -> VkSampler;
 
 	void SetDebugUtilsObjectName(VkDebugUtilsObjectNameInfoEXT const& pNameInfo);
 
@@ -683,7 +663,7 @@ struct DeviceResource : ResourceBase<InstanceResource>, std::enable_shared_from_
 
 	using ResourceBase::ResourceBase;
 
-	auto GetName() -> char const* override { 
+	auto GetName() -> char const*  { 
 		return physicalDevice->physicalProperties2.properties.deviceName;
 	}
 
@@ -692,7 +672,7 @@ struct DeviceResource : ResourceBase<InstanceResource>, std::enable_shared_from_
 	}
 
 	void Free() override {
-		VB_LOG_TRACE("[ Free ] type = DeviceResource, name = %s", physicalDevice->physicalProperties2.properties.deviceName);
+		VB_LOG_TRACE("[ Free ] type = %s, name = %s", GetType(), GetName());
 		vkDeviceWaitIdle(handle);
 
 		if (imguiDescriptorPool != VK_NULL_HANDLE) {
@@ -724,7 +704,6 @@ struct DeviceResource : ResourceBase<InstanceResource>, std::enable_shared_from_
 			return 1;
 		});
 
-		DestroyBindlessDescriptorResources();
 		for (auto& [_, sampler] : samplers) {
 			vkDestroySampler(handle, sampler, owner->allocator);
 		}
@@ -737,11 +716,47 @@ struct DeviceResource : ResourceBase<InstanceResource>, std::enable_shared_from_
 	}
 };
 
-struct DeviceResourceBase {
-	// DeviceResource* device;
-	// std::string name;
-	DeviceResourceBase(DeviceResource* device, std::string_view name = ""){};// : device(device), name(name) {}
-	~DeviceResourceBase() = default;
+struct DescriptorResource : ResourceBase<DeviceResource> {
+	VkDescriptorPool      pool   = VK_NULL_HANDLE;
+	VkDescriptorSetLayout layout = VK_NULL_HANDLE;
+	VkDescriptorSet       set    = VK_NULL_HANDLE;
+
+	// Bindless Resource IDs for descriptor indexing
+	// [binding, count]
+	struct BindingInfoExt: public BindingInfo {
+		std::vector<u32> resourceIDs;
+	};
+	std::unordered_map<DescriptorType, BindingInfoExt> bindings;
+
+	using ResourceBase::ResourceBase;
+
+	inline auto PopID(DescriptorType type) -> u32 {
+		VB_ASSERT(bindings.contains(type), "Descriptor type not found");
+		u32 id = bindings[type].resourceIDs.back();
+		bindings[type].resourceIDs.pop_back();
+		return id; 
+	}
+
+	inline void PushID(DescriptorType type, u32 id) {
+		bindings[type].resourceIDs.push_back(id);
+	}
+
+	inline auto GetBinding(DescriptorType type) -> u32 {
+		VB_ASSERT(bindings.contains(type), "Descriptor type not found");
+		return bindings[type].binding;
+	}
+
+	void Create(std::span<BindingInfo const> bindings);
+	auto CreateDescriptorSetLayout() -> VkDescriptorSetLayout;
+	auto CreateDescriptorPool()      -> VkDescriptorPool;
+	auto CreateDescriptorSets()      -> VkDescriptorSet;
+
+	auto GetType() -> char const* override { return "DescriptorResource"; }
+	void Free() override {
+		VB_LOG_TRACE("[ Free ] type = %s, name = %s", GetType(), GetName());
+		vkDestroyDescriptorPool(owner->handle, pool, owner->owner->allocator);
+		vkDestroyDescriptorSetLayout(owner->handle, layout, owner->owner->allocator);
+	}
 };
 
 struct BufferResource : ResourceBase<DeviceResource> {
@@ -754,17 +769,16 @@ struct BufferResource : ResourceBase<DeviceResource> {
 	BufferUsageFlags usage;
 	MemoryFlags memory;
 
-	auto GetName() -> char const* override { return name.data(); }
+	using ResourceBase::ResourceBase;
+
 	auto GetType() -> char const* override {  return "BufferResource"; }
 	void Free() override {
-		VB_LOG_TRACE("[ Free ] type = BufferResource, name = %s", name.data());
+		VB_LOG_TRACE("[ Free ] type = %s, name = %s", GetType(), GetName());
 		vmaDestroyBuffer(owner->vmaAllocator, handle, allocation);
 		if (rid != NullRID) {
-			owner->availableBufferRID.push_back(rid);
+			owner->descriptor.resource->PushID(DescriptorType::StorageBuffer, rid);
 		}
 	}
-
-	using ResourceBase::ResourceBase;
 };
 
 struct ImageResource : ResourceBase<DeviceResource> {
@@ -788,12 +802,10 @@ struct ImageResource : ResourceBase<DeviceResource> {
 
 	using ResourceBase::ResourceBase;
 
-	auto GetName() -> char const* override { return name.data(); }
 	auto GetType() -> char const* override {  return "ImageResource"; }
 	void Free() override {
-		VB_LOG_TRACE("[ Free ] type = ImageResource, name = %s", name.data());
+		VB_LOG_TRACE("[ Free ] type = %s, name = %s", GetType(), GetName());
 		if (!fromSwapchain) {
-			// printf("destroy image %s\n", name.c_str());
 			for (VkImageView layerView : layersView) {
 				vkDestroyImageView(owner->handle, layerView, owner->owner->allocator);
 			}
@@ -801,12 +813,15 @@ struct ImageResource : ResourceBase<DeviceResource> {
 			vkDestroyImageView(owner->handle, view, owner->owner->allocator);
 			vmaDestroyImage(owner->vmaAllocator, handle, allocation);
 			if (rid != NullRID) {
-				owner->availableImageRID.push_back(rid);
-				rid = NullRID;
+				if (usage & ImageUsage::Storage) {
+					owner->descriptor.resource->PushID(DescriptorType::StorageImage, rid);
+				}
+				if (usage & ImageUsage::Sampled) {
+					owner->descriptor.resource->PushID(DescriptorType::SampledImage, rid);
+				}
 				// for (ImTextureID imguiRID : imguiRIDs) {
 					// ImGui_ImplVulkan_RemoveTexture((VkDescriptorSet)imguiRID);
 				// }
-				// imguiRIDs.clear();
 			}
 		}
 	}
@@ -817,41 +832,38 @@ struct PipelineResource : ResourceBase<DeviceResource> {
 	VkPipelineLayout layout;
 	PipelinePoint point;
 
-	void CreatePipelineLayout(std::span<VkDescriptorSetLayout const> const& descriptorLayouts);
+	using ResourceBase::ResourceBase;
 
-	auto GetName() -> char const* override { return name.data(); }
+	void CreatePipelineLayout(std::span<VkDescriptorSetLayout const> descriptorLayouts);
+
 	auto GetType() -> char const* override {  return "PipelineResource"; }
 	void Free() override {
-		VB_LOG_TRACE("[ Free ] type = PipelineResource, name = %s", name.data());
+		VB_LOG_TRACE("[ Free ] type = %s, name = %s", GetType(), GetName());
 		vkDestroyPipeline(owner->handle, handle, owner->owner->allocator);
 		vkDestroyPipelineLayout(owner->handle, layout, owner->owner->allocator);
 	}
-
-	using ResourceBase::ResourceBase;
 };
 
 struct CommandResource : ResourceBase<DeviceResource> {
-	QueueResource* queue = nullptr;
-	VkCommandPool pool = VK_NULL_HANDLE;
 	VkCommandBuffer handle = VK_NULL_HANDLE;
-	VkDescriptorSet descriptorSet = VK_NULL_HANDLE;
-	VkFence fence = VK_NULL_HANDLE;
-	VkQueryPool queryPool;
-	std::vector<std::string> timeStampNames;
-	std::vector<uint64_t> timeStamps;
+	QueueResource*  queue = nullptr;
+	VkCommandPool   pool = VK_NULL_HANDLE;
+	VkFence         fence = VK_NULL_HANDLE;
+
+	using ResourceBase::ResourceBase;
 
 	void Create(QueueResource* queue);
 
-	auto GetName() -> char const* override { return name.data(); }	
 	auto GetType() -> char const* override { return "CommandResource"; }
 
 	void Free() override {
-		VB_LOG_TRACE("[ Free ] type = CommandResource, name = %s", name.data());
+		VB_LOG_TRACE("[ Free ] type = %s, name = %s", GetType(), GetName());
 		vkDestroyCommandPool(owner->handle, pool, owner->owner->allocator);
 		vkDestroyFence(owner->handle, fence, owner->owner->allocator);
 	}
-	using ResourceBase::ResourceBase;
 };
+
+
 
 #ifdef VB_GLFW
 struct SwapChainResource: ResourceBase<DeviceResource> {
@@ -892,7 +904,6 @@ struct SwapChainResource: ResourceBase<DeviceResource> {
 	void Create(SwapchainInfo const& info);
 	// void ReCreate(u32 width, u32 height);
 		
-	auto GetName() -> char const* override { return name.data(); }
 	auto GetType() -> char const* override {  return "SwapChainResource"; }
 	using ResourceBase::ResourceBase;
 	void Free() override;
@@ -962,6 +973,10 @@ auto Instance::CreateDevice(DeviceInfo const& info) -> Device {
 	return device;
 }
 
+void Device::UseDescriptor(Descriptor const& descriptor) {
+	resource->descriptor = descriptor;
+}
+
 void Device::ResetStaging() {
 	resource->stagingOffset = 0;
 }
@@ -975,7 +990,7 @@ auto Device::GetStagingOffset() -> u32 {
 }
 
 auto Device::GetStagingSize() -> u32 {
-	return resource->initInfo.staging_buffer_size;
+	return resource->init_info.staging_buffer_size;
 }
 
 auto Device::GetMaxSamples() -> SampleCount {
@@ -984,12 +999,12 @@ auto Device::GetMaxSamples() -> SampleCount {
 
 void Device::WaitQueue(Queue const& queue) {
 	auto result = vkQueueWaitIdle(queue.resource->handle);
-	VB_CHECK_VK_RESULT(resource->owner->initInfo.checkVkResult, result, "Failed to wait idle command buffer");
+	VB_CHECK_VK_RESULT(resource->owner->init_info.checkVkResult, result, "Failed to wait idle command buffer");
 }
 
 void Device::WaitIdle() {
 	auto result = vkDeviceWaitIdle(resource->handle);
-	VB_CHECK_VK_RESULT(resource->owner->initInfo.checkVkResult, result, "Failed to wait idle command buffer");
+	VB_CHECK_VK_RESULT(resource->owner->init_info.checkVkResult, result, "Failed to wait idle command buffer");
 }
 
 auto Queue::GetCommandBuffer() -> Command& {
@@ -997,22 +1012,22 @@ auto Queue::GetCommandBuffer() -> Command& {
 }
 
 auto Queue::GetFlags() const -> QueueFlags {
-	return resource->initInfo.flags;
+	return resource->init_info.flags;
 }
 
 auto Queue::HasSeparateFamily() const -> bool {
-	return resource->initInfo.separate_family;
+	return resource->init_info.separate_family;
 }
 
 auto Queue::SupportsPresentTo(void const* window) const -> bool {
-	return resource->initInfo.present_window == window;
+	return resource->init_info.present_window == window;
 }
 
 auto Device::GetQueue(QueueInfo const& info) -> Queue {
 	for (auto& q : resource->queuesResources) {
-		if ((q.initInfo.flags & info.flags) == info.flags &&
+		if ((q.init_info.flags & info.flags) == info.flags &&
 				(info.present_window != nullptr || 
-					q.initInfo.present_window == info.present_window)) {
+					q.init_info.present_window == info.present_window)) {
 			Queue queue;
 			queue.resource = &q;
 			return queue;
@@ -1031,6 +1046,10 @@ auto Device::CreateBuffer(BufferInfo const& info) -> Buffer {
 
 auto Device::CreateImage(ImageInfo const& info) -> Image {
 	return resource->CreateImage(info);
+}
+
+auto Descriptor::GetBinding(DescriptorType type) -> u32 {
+	return resource->GetBinding(type);
 }
 
 auto DeviceResource::CreateBuffer(BufferInfo const& info) -> Buffer {
@@ -1060,7 +1079,12 @@ auto DeviceResource::CreateBuffer(BufferInfo const& info) -> Buffer {
 	}
 
 	auto res = MakeResource<BufferResource>(this, info.name);
-
+	Buffer buffer;
+	buffer.resource = res;
+	res->size   = size;
+	res->usage  = usage;
+	res->memory = info.memory;
+	
 	VkBufferCreateInfo bufferInfo{
 		.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
 		.size = size,
@@ -1079,18 +1103,12 @@ auto DeviceResource::CreateBuffer(BufferInfo const& info) -> Buffer {
 	};
 
 	VB_VK_RESULT result = vmaCreateBuffer(vmaAllocator, &bufferInfo, &allocInfo, &res->handle, &res->allocation, nullptr);
-	VB_CHECK_VK_RESULT(owner->initInfo.checkVkResult, result, "Failed to create buffer!");
+	VB_CHECK_VK_RESULT(owner->init_info.checkVkResult, result, "Failed to create buffer!");
 	VB_LOG_TRACE("[ vmaCreateBuffer ] name = %s, size = %zu", info.name.data(), bufferInfo.size);
 
-	Buffer buffer;
-	buffer.resource = res;
-	res->size   = size;
-	res->usage  = usage;
-	res->memory = info.memory;
-
+	// Update bindless descriptor
 	if (usage & BufferUsage::Storage) {
-		res->rid = availableBufferRID.back();
-		availableBufferRID.pop_back();
+		res->rid = descriptor.resource->PopID(DescriptorType::StorageBuffer);
 
 		VkDescriptorBufferInfo bufferInfo = {
 			.buffer = res->handle,
@@ -1100,8 +1118,8 @@ auto DeviceResource::CreateBuffer(BufferInfo const& info) -> Buffer {
 
 		VkWriteDescriptorSet write = {
 			.sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-			.dstSet          = bindlessDescriptorSet,
-			.dstBinding      = initInfo.binding_buffer,
+			.dstSet          = descriptor.resource->set,
+			.dstBinding      = descriptor.resource->GetBinding(DescriptorType::StorageBuffer),
 			.dstArrayElement = buffer.GetResourceID(),
 			.descriptorCount = 1,
 			.descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
@@ -1110,7 +1128,6 @@ auto DeviceResource::CreateBuffer(BufferInfo const& info) -> Buffer {
 
 		vkUpdateDescriptorSets(handle, 1, &write, 0, nullptr);
 	}
-
 	return buffer;
 }
 
@@ -1151,7 +1168,7 @@ auto DeviceResource::CreateImage(ImageInfo const& info) -> Image {
 			: 0),
 	};
 	VB_VK_RESULT result = vmaCreateImage(vmaAllocator, &imageInfo, &allocInfo, &res->handle, &res->allocation, nullptr);
-	VB_CHECK_VK_RESULT(owner->initInfo.checkVkResult, result, "Failed to create image!");
+	VB_CHECK_VK_RESULT(owner->init_info.checkVkResult, result, "Failed to create image!");
 	VB_LOG_TRACE("[ vmaCreateImage ] name = %s, extent = %ux%ux%u, layers = %u",
 		info.name.data(), info.extent.width, info.extent.height, info.extent.depth,
 		info.layers);
@@ -1189,7 +1206,7 @@ auto DeviceResource::CreateImage(ImageInfo const& info) -> Image {
 
 	// TODO(nm): Create image view only if usage if Sampled or Storage or other fitting
 	result = vkCreateImageView(handle, &viewInfo, owner->allocator, &res->view);
-	VB_CHECK_VK_RESULT(owner->initInfo.checkVkResult, result, "Failed to create image view!");
+	VB_CHECK_VK_RESULT(owner->init_info.checkVkResult, result, "Failed to create image view!");
 
 	if (info.layers > 1) {
 		viewInfo.subresourceRange.layerCount = 1;
@@ -1198,16 +1215,15 @@ auto DeviceResource::CreateImage(ImageInfo const& info) -> Image {
 			viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
 			viewInfo.subresourceRange.baseArrayLayer = i;
 			result = vkCreateImageView(handle, &viewInfo, owner->allocator, &res->layersView[i]);
-			VB_CHECK_VK_RESULT(owner->initInfo.checkVkResult, result, "Failed to create image view!");
+			VB_CHECK_VK_RESULT(owner->init_info.checkVkResult, result, "Failed to create image view!");
 		}
 	}
-
-	
-	if (info.usage & ImageUsage::Sampled || info.usage & ImageUsage::Storage) {
-		res->rid = availableImageRID.back();
-		availableImageRID.pop_back();
+	if (info.usage & ImageUsage::Sampled) {
+		res->rid = descriptor.resource->PopID(DescriptorType::SampledImage);
 	}
-
+	if (info.usage & ImageUsage::Storage) {
+		res->rid = descriptor.resource->PopID(DescriptorType::StorageImage);
+	}
 	if (info.usage & ImageUsage::Sampled) {
 		ImageLayout newLayout = ImageLayout::ShaderRead;
 		switch (aspect) {
@@ -1231,10 +1247,11 @@ auto DeviceResource::CreateImage(ImageInfo const& info) -> Image {
 			.imageView   = res->view,
 			.imageLayout = (VkImageLayout)newLayout,
 		};
+
 		VkWriteDescriptorSet write = {
 			.sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-			.dstSet          = bindlessDescriptorSet,
-			.dstBinding      = initInfo.binding_sampler,
+			.dstSet          = descriptor.resource->set,
+			.dstBinding      = descriptor.resource->GetBinding(DescriptorType::SampledImage),
 			.dstArrayElement = image.GetResourceID(),
 			.descriptorCount = 1,
 			.descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
@@ -1251,8 +1268,8 @@ auto DeviceResource::CreateImage(ImageInfo const& info) -> Image {
 		};
 		VkWriteDescriptorSet write = {
 			.sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-			.dstSet          = bindlessDescriptorSet,
-			.dstBinding      = initInfo.binding_storage_image,
+			.dstSet          = descriptor.resource->set,
+			.dstBinding      = descriptor.resource->GetBinding(DescriptorType::StorageImage),
 			.dstArrayElement = image.GetResourceID(),
 			.descriptorCount = 1,
 			.descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
@@ -1355,7 +1372,7 @@ auto LoadShader(Pipeline::Stage const& stage) -> std::vector<char> {
 	}
 }
 
-void PipelineResource::CreatePipelineLayout(std::span<VkDescriptorSetLayout const> const& descriptorLayouts) {
+void PipelineResource::CreatePipelineLayout(std::span<VkDescriptorSetLayout const> descriptorLayouts) {
 	VkPushConstantRange pushConstant{
 		.stageFlags = VK_SHADER_STAGE_ALL,
 		.offset     = 0,
@@ -1371,14 +1388,14 @@ void PipelineResource::CreatePipelineLayout(std::span<VkDescriptorSetLayout cons
 	};
 
 	VB_VK_RESULT result = vkCreatePipelineLayout(owner->handle, &pipelineLayoutInfo, owner->owner->allocator, &this->layout);
-	VB_CHECK_VK_RESULT(owner->owner->initInfo.checkVkResult, result, "Failed to create pipeline layout!");
+	VB_CHECK_VK_RESULT(owner->owner->init_info.checkVkResult, result, "Failed to create pipeline layout!");
 }
 
 auto Device::CreatePipeline(PipelineInfo const& info) -> Pipeline {
 	VB_ASSERT(info.point != PipelinePoint::MaxEnum, "Pipeline point should be set!");
 	VB_ASSERT(info.stages.size() > 0, "Pipeline should have at least one stage!");
 	if (info.point == PipelinePoint::Graphics &&
-			resource->initInfo.pipeline_library &&
+			resource->init_info.pipeline_library &&
 				resource->physicalDevice->graphicsPipelineLibraryFeatures.graphicsPipelineLibrary) {
 		return resource->pipelineLibrary.CreatePipeline(info);
 	}
@@ -1389,7 +1406,7 @@ auto DeviceResource::CreatePipeline(PipelineInfo const& info) -> Pipeline {
 	Pipeline pipeline;
 	pipeline.resource = MakeResource<PipelineResource>(this, info.name);
 	pipeline.resource->point = info.point;
-	pipeline.resource->CreatePipelineLayout({{this->bindlessDescriptorLayout}});
+	pipeline.resource->CreatePipelineLayout({{this->descriptor.resource->layout}});
 
 	VB_VLA(VkPipelineShaderStageCreateInfo, shader_stages, info.stages.size());
 	VB_VLA(VkShaderModule, shader_modules, info.stages.size());
@@ -1400,7 +1417,7 @@ auto DeviceResource::CreatePipeline(PipelineInfo const& info) -> Pipeline {
 		createInfo.codeSize = bytes.size();
 		createInfo.pCode = (const u32*)(bytes.data());
 		VB_VK_RESULT result = vkCreateShaderModule(handle, &createInfo, owner->allocator, &shader_modules[i]);
-		VB_CHECK_VK_RESULT(owner->initInfo.checkVkResult, result, "Failed to create shader module!");
+		VB_CHECK_VK_RESULT(owner->init_info.checkVkResult, result, "Failed to create shader module!");
 		shader_stages[i] = {
 			.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
 			.stage = (VkShaderStageFlagBits)stage.stage,
@@ -1413,7 +1430,6 @@ auto DeviceResource::CreatePipeline(PipelineInfo const& info) -> Pipeline {
 
 	if (info.point == PipelinePoint::Compute) {
 		VB_ASSERT(shader_stages.size() == 1, "Compute pipeline supports only 1 stage.");
-
 		VkComputePipelineCreateInfo pipelineInfo {
 			.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
 			.pNext = VK_NULL_HANDLE,
@@ -1422,11 +1438,9 @@ auto DeviceResource::CreatePipeline(PipelineInfo const& info) -> Pipeline {
 			.basePipelineHandle = VK_NULL_HANDLE,
 			.basePipelineIndex = -1,
 		};
-
 		VB_VK_RESULT result = vkCreateComputePipelines(handle, VK_NULL_HANDLE, 1,
 			&pipelineInfo, owner->allocator, &pipeline.resource->handle);
-
-		VB_CHECK_VK_RESULT(owner->initInfo.checkVkResult, result, "Failed to create compute pipeline!");
+		VB_CHECK_VK_RESULT(owner->init_info.checkVkResult, result, "Failed to create compute pipeline!");
 	} else {
 		// graphics pipeline
 		VkPipelineRasterizationStateCreateInfo rasterizationState = {
@@ -1572,7 +1586,7 @@ auto DeviceResource::CreatePipeline(PipelineInfo const& info) -> Pipeline {
 
 		VB_VK_RESULT vkRes = vkCreateGraphicsPipelines(handle, VK_NULL_HANDLE, 1, 
 			&pipelineInfo, owner->allocator, &pipeline.resource->handle);
-		VB_CHECK_VK_RESULT(owner->initInfo.checkVkResult, vkRes, "Failed to create graphics pipeline!");
+		VB_CHECK_VK_RESULT(owner->init_info.checkVkResult, vkRes, "Failed to create graphics pipeline!");
 	}
 
 	for (auto& shaderModule: shader_modules) {
@@ -1585,7 +1599,7 @@ auto DeviceResource::PipelineLibrary::CreatePipeline(PipelineInfo const& info) -
 	Pipeline pipeline;
 	pipeline.resource = MakeResource<PipelineResource>(device, info.name);
 	pipeline.resource->point = info.point;
-	pipeline.resource->CreatePipelineLayout({{device->bindlessDescriptorLayout}});
+	pipeline.resource->CreatePipelineLayout({{device->descriptor.resource->layout}});
 
 	DeviceResource::PipelineLibrary::VertexInputInfo vertexInputInfo { info.vertexAttributes, info.line_topology };
 	if (!vertexInputInterfaces.count(vertexInputInfo)) {
@@ -1712,7 +1726,7 @@ void DeviceResource::PipelineLibrary::CreateVertexInputInterface(VertexInputInfo
 	VkPipeline pipeline;
 	VB_VK_RESULT res = vkCreateGraphicsPipelines(device->handle, device->pipelineCache, 1, 
 		&pipelineLibraryInfo, device->owner->allocator, &pipeline);
-	VB_CHECK_VK_RESULT(device->owner->initInfo.checkVkResult, res, "Failed to create vertex input interface!");
+	VB_CHECK_VK_RESULT(device->owner->init_info.checkVkResult, res, "Failed to create vertex input interface!");
 	vertexInputInterfaces.emplace(info, pipeline);
 }
 
@@ -1821,7 +1835,7 @@ void DeviceResource::PipelineLibrary::CreatePreRasterizationShaders(PreRasteriza
 	VkPipeline pipeline;
 	VB_VK_RESULT res = vkCreateGraphicsPipelines(device->handle, device->pipelineCache, 1,
 		&pipelineLibraryInfo, device->owner->allocator, &pipeline);
-	VB_CHECK_VK_RESULT(device->owner->initInfo.checkVkResult, res, "Failed to create pre-rasterization shaders!");
+	VB_CHECK_VK_RESULT(device->owner->init_info.checkVkResult, res, "Failed to create pre-rasterization shaders!");
 	preRasterizationShaders.emplace(info, pipeline);
 }
 
@@ -1894,7 +1908,7 @@ void DeviceResource::PipelineLibrary::CreateFragmentShader(FragmentShaderInfo co
 	VkPipeline pipeline;
 	VB_VK_RESULT res = vkCreateGraphicsPipelines(device->handle, device->pipelineCache, 1,
 		&pipelineLibraryInfo, nullptr, &pipeline);
-	VB_CHECK_VK_RESULT(device->owner->initInfo.checkVkResult, res, "Failed to create vertex input interface!");
+	VB_CHECK_VK_RESULT(device->owner->init_info.checkVkResult, res, "Failed to create vertex input interface!");
 	fragmentShaders.emplace(info, pipeline);
 }
 
@@ -1954,7 +1968,7 @@ void DeviceResource::PipelineLibrary::CreateFragmentOutputInterface(FragmentOutp
 	VkPipeline pipeline;
 	VB_VK_RESULT result = vkCreateGraphicsPipelines(device->handle, device->pipelineCache, 1,
 		&pipelineLibraryInfo, nullptr, &pipeline);
-	VB_CHECK_VK_RESULT(device->owner->initInfo.checkVkResult, result, "Failed to create fragment output interface!");
+	VB_CHECK_VK_RESULT(device->owner->init_info.checkVkResult, result, "Failed to create fragment output interface!");
 	fragmentOutputInterfaces.emplace(info, pipeline);
 }
 
@@ -1973,14 +1987,14 @@ auto DeviceResource::PipelineLibrary::LinkPipeline(std::array<VkPipeline, 4> con
 		.layout = layout,
 	};
 
-	if (device->initInfo.link_time_optimization) {
+	if (device->init_info.link_time_optimization) {
 		pipelineInfo.flags = VK_PIPELINE_CREATE_LINK_TIME_OPTIMIZATION_BIT_EXT;
 	}
 
 	//todo: Thread pipeline cache
 	VkPipeline pipeline = VK_NULL_HANDLE;
 	VB_VK_RESULT result = vkCreateGraphicsPipelines(device->handle, device->pipelineCache, 1, &pipelineInfo, nullptr, &pipeline);
-	VB_CHECK_VK_RESULT(device->owner->initInfo.checkVkResult, result, "Failed to create vertex input interface!");
+	VB_CHECK_VK_RESULT(device->owner->init_info.checkVkResult, result, "Failed to create vertex input interface!");
 	return pipeline;
 }
 
@@ -2140,7 +2154,7 @@ void Command::BindPipeline(Pipeline const& pipeline) {
 	// TODO(nm): bind only if not compatible for used descriptor sets or push constant range
 	// ref: https://registry.khronos.org/vulkan/specs/1.2-extensions/html/vkspec.html#descriptorsets-compatibility
 	vkCmdBindDescriptorSets(resource->handle, (VkPipelineBindPoint)pipeline.resource->point,
-		pipeline.resource->layout, 0, 1, &resource->descriptorSet, 0, nullptr);
+		pipeline.resource->layout, 0, 1, &resource->owner->descriptor.resource->set, 0, nullptr);
 }
 
 void Command::PushConstants(Pipeline const& pipeline, void const* data, u32 size) {
@@ -2199,7 +2213,7 @@ void Command::QueueSubmit(SubmitInfo const& submitInfo) {
 	};
 
 	auto result = vkQueueSubmit2(resource->queue->handle, 1, &info, resource->fence);
-	VB_CHECK_VK_RESULT(resource->owner->owner->initInfo.checkVkResult, result, "Failed to submit command buffer");
+	VB_CHECK_VK_RESULT(resource->owner->owner->init_info.checkVkResult, result, "Failed to submit command buffer");
 }
 
 auto InstanceResource::CreateDebugUtilsMessenger(
@@ -2329,7 +2343,7 @@ void PopulateDebugReportCreateInfo(VkDebugReportCallbackCreateInfoEXT& createInf
 
 void InstanceResource::Create(InstanceInfo const& info){
 	auto instance = this;
-	initInfo = info;
+	init_info = info;
 
 	// optional data, provides useful info to the driver
 	VkApplicationInfo appInfo{
@@ -2470,7 +2484,7 @@ void InstanceResource::Create(InstanceInfo const& info){
 
 	// Instance creation
 	VB_VK_RESULT result = vkCreateInstance(&createInfo, allocator, &handle);
-	VB_CHECK_VK_RESULT(initInfo.checkVkResult, result, "Failed to create Vulkan instance!");
+	VB_CHECK_VK_RESULT(init_info.checkVkResult, result, "Failed to create Vulkan instance!");
 	VB_LOG_TRACE("Created instance.");
 
 	// Debug Utils
@@ -2478,7 +2492,7 @@ void InstanceResource::Create(InstanceInfo const& info){
 		VkDebugUtilsMessengerCreateInfoEXT messengerInfo;
 		PopulateDebugMessengerCreateInfo(messengerInfo);
 		result = CreateDebugUtilsMessenger(messengerInfo);
-		VB_CHECK_VK_RESULT(initInfo.checkVkResult, result, "Failed to set up debug messenger!");
+		VB_CHECK_VK_RESULT(init_info.checkVkResult, result, "Failed to set up debug messenger!");
 		VB_LOG_TRACE("Created debug messenger.");
 	}
 
@@ -2488,7 +2502,7 @@ void InstanceResource::Create(InstanceInfo const& info){
 		PopulateDebugReportCreateInfo(debugReportInfo);
 		// Create the callback handle
 		result = CreateDebugReportCallback(debugReportInfo);
-		VB_CHECK_VK_RESULT(initInfo.checkVkResult, result, "Failed to set up debug report callback!");
+		VB_CHECK_VK_RESULT(init_info.checkVkResult, result, "Failed to set up debug report callback!");
 		VB_LOG_TRACE("Created debug report callback.");
 	}
 
@@ -2602,7 +2616,7 @@ auto PhysicalDeviceResource::GetQueueFamilyIndex(const QueueFamilyIndexRequest& 
 		if (params.surfaceToSupport != VK_NULL_HANDLE) {
 			VkBool32 presentSupport = false;
 			VB_VK_RESULT result = vkGetPhysicalDeviceSurfaceSupportKHR(handle, i, params.surfaceToSupport, &presentSupport);
-			VB_CHECK_VK_RESULT(instance->initInfo.checkVkResult, result, "vkGetPhysicalDeviceSurfaceSupportKHR failed!");
+			VB_CHECK_VK_RESULT(instance->init_info.checkVkResult, result, "vkGetPhysicalDeviceSurfaceSupportKHR failed!");
 			suitable = suitable && presentSupport;
 		}
 
@@ -2651,7 +2665,7 @@ auto PhysicalDeviceResource::GetQueueFamilyIndex(const QueueFamilyIndexRequest& 
 }
 
 void DeviceResource::Create(DeviceInfo const& info) {
-	initInfo = info;
+	init_info = info;
 	pipelineLibrary.device = this;
 	// <family index, queue count>
 	// VB_VLA(u32, numQueuesToCreate, physicalDevice->availableFamilies.size());
@@ -2799,7 +2813,7 @@ void DeviceResource::Create(DeviceInfo const& info) {
 
 	// request features if available
 	VkPhysicalDeviceGraphicsPipelineLibraryFeaturesEXT graphicsPipelineLibraryFeatures;
-	if (initInfo.pipeline_library) {
+	if (init_info.pipeline_library) {
 		graphicsPipelineLibraryFeatures = {
 			.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_GRAPHICS_PIPELINE_LIBRARY_FEATURES_EXT,
 			.pNext = features2.pNext,
@@ -2854,7 +2868,7 @@ void DeviceResource::Create(DeviceInfo const& info) {
 	}; features2.pNext = &dynamicRenderingFeatures;
 
 	VkPhysicalDeviceDynamicRenderingUnusedAttachmentsFeaturesEXT unusedAttachmentFeatures;
-	if (initInfo.unused_attachments) {
+	if (init_info.unused_attachments) {
 		unusedAttachmentFeatures = {
 			.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_UNUSED_ATTACHMENTS_FEATURES_EXT,
 			.pNext = features2.pNext,
@@ -2884,14 +2898,14 @@ void DeviceResource::Create(DeviceInfo const& info) {
 	};
 
 	// specify the required layers to the device
-	if (owner->initInfo.validation_layers) {
+	if (owner->init_info.validation_layers) {
 		auto& layers = owner->activeLayersNames;
 		createInfo.enabledLayerCount = layers.size();
 		createInfo.ppEnabledLayerNames = layers.data();
 	}
 
 	VB_VK_RESULT result = vkCreateDevice(physicalDevice->handle, &createInfo, owner->allocator, &handle);
-	VB_CHECK_VK_RESULT(owner->initInfo.checkVkResult, result, "Failed to create logical device!");
+	VB_CHECK_VK_RESULT(owner->init_info.checkVkResult, result, "Failed to create logical device!");
 	VB_LOG_TRACE("Created logical device, name = %s", physicalDevice->physicalProperties2.properties.deviceName);
 
 	queuesResources.reserve(std::reduce(numQueuesToCreate.begin(), numQueuesToCreate.end()));
@@ -2900,7 +2914,7 @@ void DeviceResource::Create(DeviceInfo const& info) {
 			queuesResources.emplace_back(QueueResource{
 				.familyIndex = info.queueFamilyIndex,
 				.index = index,
-				.initInfo = {
+				.init_info = {
 					.flags = static_cast<QueueFlags>(physicalDevice->availableFamilies[info.queueFamilyIndex].queueFlags),
 				},
 			});
@@ -2925,9 +2939,9 @@ void DeviceResource::Create(DeviceInfo const& info) {
 	};
 
 	result = vmaCreateAllocator(&allocatorCreateInfo, &vmaAllocator);
-	VB_CHECK_VK_RESULT(owner->initInfo.checkVkResult, result, "Failed to create allocator!");
+	VB_CHECK_VK_RESULT(owner->init_info.checkVkResult, result, "Failed to create allocator!");
 
-	if (owner->initInfo.validation_layers) {
+	if (owner->init_info.validation_layers) {
 		vkSetDebugUtilsObjectNameEXT = reinterpret_cast<PFN_vkSetDebugUtilsObjectNameEXT>
 			(vkGetDeviceProcAddr(handle, "vkSetDebugUtilsObjectNameEXT"));
 	}
@@ -2947,21 +2961,19 @@ void DeviceResource::Create(DeviceInfo const& info) {
 		{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1000},
 		{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1000} 
 	};
-	VkDescriptorPoolCreateInfo imguiPoolInfo{};
-	imguiPoolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-	imguiPoolInfo.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
-	imguiPoolInfo.maxSets = (u32)(1024);
-	imguiPoolInfo.poolSizeCount = VB_ARRAY_SIZE(imguiPoolSizes);
-	imguiPoolInfo.pPoolSizes = imguiPoolSizes;
+
+	VkDescriptorPoolCreateInfo imguiPoolInfo = {
+		.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+		.flags         = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT,
+		.maxSets       = 1024u,
+		.poolSizeCount = VB_ARRAY_SIZE(imguiPoolSizes),
+		.pPoolSizes    = imguiPoolSizes,
+	};
 
 	result = vkCreateDescriptorPool(handle, &imguiPoolInfo, owner->allocator, &imguiDescriptorPool);
-	VB_CHECK_VK_RESULT(owner->initInfo.checkVkResult, result, "Failed to create imgui descriptor pool!");
+	VB_CHECK_VK_RESULT(owner->init_info.checkVkResult, result, "Failed to create imgui descriptor pool!");
 #endif
-
-	// Create bindless resources
-	CreateBindlessDescriptorResources();
-	// CreateDescriptorResources();
-
+	
 	// Create command buffers
 	for (auto& q: queuesResources) {
 		q.command.resource = MakeResource<CommandResource>(this, "Command Buffer");
@@ -2970,7 +2982,7 @@ void DeviceResource::Create(DeviceInfo const& info) {
 
 	// Create staging buffer
 	staging = CreateBuffer({
-		initInfo.staging_buffer_size,
+		init_info.staging_buffer_size,
 		BufferUsage::TransferSrc,
 		Memory::CPU,
 		"Staging Buffer"
@@ -3028,7 +3040,7 @@ void SwapChainResource::ChooseExtent() {
 void SwapChainResource::CreateSurface() {
 	VB_VK_RESULT result = glfwCreateWindowSurface(owner->owner->handle,
 		reinterpret_cast<GLFWwindow*>(init_info.window), owner->owner->allocator, &surface);
-	VB_CHECK_VK_RESULT(owner->owner->initInfo.checkVkResult, result, "Failed to create window surface!");
+	VB_CHECK_VK_RESULT(owner->owner->init_info.checkVkResult, result, "Failed to create window surface!");
 }
 
 void SwapChainResource::CreateSurfaceFormats() {
@@ -3110,7 +3122,7 @@ void SwapChainResource::CreateSwapchain() {
 	};
 
 	VB_VK_RESULT result = vkCreateSwapchainKHR(owner->handle, &createInfo, owner->owner->allocator, &handle);
-	VB_CHECK_VK_RESULT(owner->owner->initInfo.checkVkResult, result, "Failed to create swap chain!");	
+	VB_CHECK_VK_RESULT(owner->owner->init_info.checkVkResult, result, "Failed to create swap chain!");	
 	vkDestroySwapchainKHR(owner->handle, createInfo.oldSwapchain, owner->owner->allocator);
 }
 
@@ -3148,10 +3160,10 @@ void SwapChainResource::CreateImages() {
 		};
 
 		VB_VK_RESULT result = vkCreateImageView(owner->handle, &viewInfo, owner->owner->allocator, &image.resource->view);
-		VB_CHECK_VK_RESULT(owner->owner->initInfo.checkVkResult, result, "Failed to create SwapChain image view!");
+		VB_CHECK_VK_RESULT(owner->owner->init_info.checkVkResult, result, "Failed to create SwapChain image view!");
 
 		// Add debug names
-		if (owner->owner->initInfo.validation_layers) {
+		if (owner->owner->init_info.validation_layers) {
 			owner->SetDebugUtilsObjectName({
 				.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT,
 				.objectType = VkObjectType::VK_OBJECT_TYPE_IMAGE,
@@ -3179,9 +3191,9 @@ void SwapChainResource::CreateSemaphores() {
 	for (size_t i = 0; i < init_info.frames_in_flight; ++i) {
 		VB_VK_RESULT
 		result = vkCreateSemaphore(owner->handle, &semaphoreInfo, nullptr, &image_available_semaphores[i]);
-		VB_CHECK_VK_RESULT(owner->owner->initInfo.checkVkResult, result, "Failed to create semaphore!");
+		VB_CHECK_VK_RESULT(owner->owner->init_info.checkVkResult, result, "Failed to create semaphore!");
 		result = vkCreateSemaphore(owner->handle, &semaphoreInfo, nullptr, &render_finished_semaphores[i]);
-		VB_CHECK_VK_RESULT(owner->owner->initInfo.checkVkResult, result, "Failed to create semaphore!");
+		VB_CHECK_VK_RESULT(owner->owner->init_info.checkVkResult, result, "Failed to create semaphore!");
 	}
 }
 
@@ -3211,7 +3223,7 @@ void SwapChainResource::Create(SwapchainInfo const& info) {
 }
 
 void SwapChainResource::Free() {
-	VB_LOG_TRACE("[ Free ] type = SwapChainResource, name = %s", name.data());
+	VB_LOG_TRACE("[ Free ] type = %s, name = %s", GetType(), GetName());
 	for (auto& cmd: commands) {
 		vkWaitForFences(owner->handle, 1, &cmd.resource->fence, VK_TRUE, std::numeric_limits<u32>::max());
 	}
@@ -3279,7 +3291,7 @@ bool Swapchain::AcquireImage() {
 	case VK_SUBOPTIMAL_KHR:
 		return false;
 	default:
-		VB_CHECK_VK_RESULT(resource->owner->owner->initInfo.checkVkResult, result, "Failed to acquire swap chain image!");
+		VB_CHECK_VK_RESULT(resource->owner->owner->init_info.checkVkResult, result, "Failed to acquire swap chain image!");
 		return false;
 	}
 }
@@ -3328,7 +3340,7 @@ void Swapchain::SubmitAndPresent() {
 		resource->dirty = true;
 		return;
 	default:
-		VB_CHECK_VK_RESULT(resource->owner->owner->initInfo.checkVkResult, result, "Failed to present swap chain image!"); 
+		VB_CHECK_VK_RESULT(resource->owner->owner->init_info.checkVkResult, result, "Failed to present swap chain image!"); 
 		break;
 	}
 
@@ -3344,204 +3356,130 @@ auto Device::CreateSwapchain(SwapchainInfo const& info) -> Swapchain {
 }
 #endif // VB_GLFW
 
-void DeviceResource::CreateDescriptorPool() {
-	// type                                     descriptorCount
-	std::vector<VkDescriptorPoolSize> poolSizes = {
-		{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,        initInfo.max_storage_buffers},
-		{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,                initInfo.max_sampled_images},
-		// {VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, initInfo.MaxAccelerationStructures},
-		{VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,                 initInfo.max_storage_images},
-	};
-
-	VkDescriptorPoolCreateInfo descriptorPoolCreateInfo = {
-		.sType	       = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
-						// | VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT
-		.maxSets	   = 1,
-		.poolSizeCount = static_cast<u32>(poolSizes.size()),
-		.pPoolSizes    = poolSizes.data(),
-	};
-	VB_VK_RESULT result = vkCreateDescriptorPool(handle, &descriptorPoolCreateInfo, nullptr, &descriptorPool);
-	VB_CHECK_VK_RESULT(owner->initInfo.checkVkResult, result, "Failed to create descriptor pool!");
+auto Device::CreateDescriptor(std::span<BindingInfo const> bindings) -> Descriptor {
+	VB_ASSERT(bindings.size() > 0, "Descriptor must have at least one binding");
+	Descriptor descriptor;
+	descriptor.resource = MakeResource<DescriptorResource>(resource.get(), "Descriptor");
+	descriptor.resource->Create(bindings);
+	return descriptor;
 }
 
-void DeviceResource::CreateDescriptorSetLayout() {
-	int const bindingCount = 3;
-	std::vector<VkDescriptorSetLayoutBinding> bindings(bindingCount);
-	std::vector<VkDescriptorBindingFlags> bindingFlags(bindingCount);
-
-	bindings[0].binding = initInfo.binding_sampler;
-	bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-	bindings[0].descriptorCount = initInfo.max_storage_buffers;
-	bindings[0].stageFlags = VK_SHADER_STAGE_ALL;
-	// bindings.push_back(texture);
-	// bindingFlags.push_back({ VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT | VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT });
-
-	bindings[1].binding = initInfo.binding_buffer;
-	bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-	bindings[1].descriptorCount = initInfo.max_sampled_images;
-	bindings[1].stageFlags = VK_SHADER_STAGE_ALL;
-	bindingFlags[1] = VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT;
-
-	bindings[2].binding = initInfo.binding_storage_image;
-	bindings[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-	bindings[2].descriptorCount = initInfo.max_storage_images;
-	bindings[2].stageFlags = VK_SHADER_STAGE_ALL;
-
-
-	// VkDescriptorSetLayoutBindingFlagsCreateInfo setLayoutBindingFlags{};
-	// setLayoutBindingFlags.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO;
-	// setLayoutBindingFlags.bindingCount = 2;
-	// setLayoutBindingFlags.pBindingFlags = bindingFlags;
-
-	VkDescriptorSetLayoutCreateInfo descriptorSetLayoutCreateInfo = {};
-	descriptorSetLayoutCreateInfo.sType	= VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-	descriptorSetLayoutCreateInfo.bindingCount = bindingCount;
-	descriptorSetLayoutCreateInfo.pBindings	= &bindings[0];
-	// descriptorSetLayoutCreateInfo.flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT;
-	// descriptorSetLayoutCreateInfo.pNext = &setLayoutBindingFlags;
-
-	VB_VK_RESULT result = vkCreateDescriptorSetLayout(handle, &descriptorSetLayoutCreateInfo, nullptr, &descriptorSetLayout);
-	VB_CHECK_VK_RESULT(owner->initInfo.checkVkResult, result, "Failed to allocate descriptor set!");
-}
-
-void DeviceResource::CreateDescriptorSet() {
-	// Descriptor Set
-	VkDescriptorSetAllocateInfo allocInfo{
-		.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
-		.descriptorPool = descriptorPool,
-		.descriptorSetCount = 1,
-		.pSetLayouts = &descriptorSetLayout,
-	};
-
-	VB_VK_RESULT result = vkAllocateDescriptorSets(handle, &allocInfo, &descriptorSet);
-	VB_CHECK_VK_RESULT(owner->initInfo.checkVkResult, result, "Failed to allocate descriptor set!");
-}
-
-void DeviceResource::CreateDescriptorResources() {
-	CreateDescriptorSetLayout();
-	CreateDescriptorPool();
-	CreateDescriptorSet();
-}
-
-// vkDestroyDescriptorPool + vkDestroyDescriptorSetLayout
-void DeviceResource::DestroyDescriptorResources() {
-	vkDestroyDescriptorPool(handle, descriptorPool, owner->allocator);
-	vkDestroyDescriptorSetLayout(handle, descriptorSetLayout, owner->allocator);
-	descriptorSet = VK_NULL_HANDLE;
-	descriptorPool = VK_NULL_HANDLE;
-	descriptorSetLayout = VK_NULL_HANDLE;
-}
-
-void DeviceResource::CreateBindlessDescriptorResources() {
-	// create bindless resources
-	{
-		// create descriptor set pool for bindless resources
-		std::vector<VkDescriptorPoolSize> bindlessPoolSizes = {
-			{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, initInfo.max_storage_buffers},
-			{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, initInfo.max_sampled_images},
-			// {VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, initInfo.MaxAccelerationStructures},
-			{VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, initInfo.max_storage_images},
-		};
-
-		// Fill with sequential numbers
-		availableBufferRID.resize(initInfo.max_sampled_images);
-		std::iota(availableBufferRID.rbegin(), availableBufferRID.rend(), 0);
-		availableImageRID.resize(initInfo.max_storage_buffers);
-		std::iota(availableImageRID.rbegin(), availableImageRID.rend(), 0);
-		// availableTLASRID.resize(initInfo.MaxAccelerationStructures);
-		// std::iota(availableTLASRID.begin(), availableTLASRID.end(), 0);
-		availableStorageImageRID.resize(initInfo.max_storage_images);
-		std::iota(availableStorageImageRID.rbegin(), availableStorageImageRID.rend(), 0);
-
-		VkDescriptorPoolCreateInfo bindlessPoolInfo{
-			.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
-			.flags         = VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT,
-			.maxSets       = 1,
-			.poolSizeCount = static_cast<u32>(bindlessPoolSizes.size()),
-			.pPoolSizes    = bindlessPoolSizes.data(),
-		};
-
-		VB_VK_RESULT result = vkCreateDescriptorPool(handle, &bindlessPoolInfo, owner->allocator, &bindlessDescriptorPool);
-		VB_CHECK_VK_RESULT(owner->initInfo.checkVkResult, result, "Failed to create bindless descriptor pool!");
-
-		// create Descriptor Set Layout for bindless resources
-		VkDescriptorSetLayoutBinding bindings[] = {
-			{
-				.binding = initInfo.binding_sampler,
-				.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-				.descriptorCount = initInfo.max_storage_buffers,
-				.stageFlags = VK_SHADER_STAGE_ALL,
-			},
-			{
-				.binding = initInfo.binding_buffer,
-				.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-				.descriptorCount = initInfo.max_sampled_images,
-				.stageFlags = VK_SHADER_STAGE_ALL,
-			},
-			// {
-			// 	.binding = BINDING_TLAS,
-			// 	.descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR,
-			// 	.descriptorCount = initInfo.MaxAccelerationStructures,
-			// 	.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
-			// },
-			{
-				.binding = initInfo.binding_storage_image,
-				.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-				.descriptorCount = initInfo.max_storage_images,
-				.stageFlags = VK_SHADER_STAGE_ALL,
-			},
-		};
-
-		VkDescriptorBindingFlags bindingFlags[] = {
-			VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT | VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT ,
-			VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT ,
-			//  VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT | VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT ,
-			VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT | VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT ,
-		};
-		// todo: try VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT for last binding ONLY
-
-		VkDescriptorSetLayoutBindingFlagsCreateInfo setLayoutBindingFlagsInfo{
-			.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO,
-			.bindingCount  = VB_ARRAY_SIZE(bindingFlags),
-			.pBindingFlags = bindingFlags,
-		};
-
-		VkDescriptorSetLayoutCreateInfo descriptorLayoutInfo{
-			.sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-			.pNext        = &setLayoutBindingFlagsInfo,
-			.flags        = VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT,
-			.bindingCount = VB_ARRAY_SIZE(bindings),
-			.pBindings    = bindings,
-		};
-
-		result = vkCreateDescriptorSetLayout(handle, &descriptorLayoutInfo, owner->allocator, &bindlessDescriptorLayout);
-		VB_CHECK_VK_RESULT(owner->initInfo.checkVkResult, result, "Failed to create bindless descriptor set layout!");
-
-		// create Descriptor Set for bindless resources
-		VkDescriptorSetAllocateInfo allocInfo{
-			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
-			.descriptorPool = bindlessDescriptorPool,
-			.descriptorSetCount = 1,
-			.pSetLayouts = &bindlessDescriptorLayout,
-		};
-
-		result = vkAllocateDescriptorSets(handle, &allocInfo, &bindlessDescriptorSet);
-		VB_CHECK_VK_RESULT(owner->initInfo.checkVkResult, result, "Failed to allocate bindless descriptor set!");
+void DescriptorResource::Create(std::span<BindingInfo const> binding_infos) {
+	std::set<u32> specified_bindings;
+	bindings.reserve(binding_infos.size());
+	for (auto const& info : binding_infos) { // todo: allow duplicate DescriptorType
+		auto [_, success] = bindings.try_emplace(info.type, info);
+		VB_ASSERT(success, "Duplicate DescriptorType in descriptor binding list");
 	}
+	for (auto const& [_, info] : bindings) {
+		if (info.binding != BindingInfo::kBindingAuto) {
+			if (!specified_bindings.insert(info.binding).second) {
+				VB_ASSERT(false, "Duplicate binding in descriptor binding list");
+			}
+		}
+	}
+	u32 next_binding = 0;
+	for (auto& [_, info] : bindings) {
+		if (info.binding == BindingInfo::kBindingAuto) {
+			while (specified_bindings.contains(next_binding)) {
+				++next_binding;
+			}
+			info.binding = next_binding;
+		}
+	}
+	// fill with reversed indices so that 0 is at the back
+	for (auto const& binding : binding_infos) {
+		auto& vec = bindings[binding.type].resourceIDs;
+		vec.resize(binding.count);
+		std::iota(vec.rbegin(), vec.rend(), 0);
+	}
+	this->pool   = CreateDescriptorPool();
+	this->layout = CreateDescriptorSetLayout();
+	this->set    = CreateDescriptorSets();
 }
 
-void DeviceResource::DestroyBindlessDescriptorResources(){
-	vkDestroyDescriptorPool(handle, bindlessDescriptorPool, owner->allocator);
-	vkDestroyDescriptorSetLayout(handle, bindlessDescriptorLayout, owner->allocator);
-	bindlessDescriptorSet = VK_NULL_HANDLE;
-	bindlessDescriptorPool = VK_NULL_HANDLE;
-	bindlessDescriptorLayout = VK_NULL_HANDLE;
+auto DescriptorResource::CreateDescriptorPool() -> VkDescriptorPool {
+	VB_VLA(VkDescriptorPoolSize, pool_sizes, bindings.size());
+	for (u32 i = 0; auto const& [_, binding] : bindings) {
+		pool_sizes[i] = {static_cast<VkDescriptorType>(binding.type), binding.count};
+		++i;
+	}
+	u32 pool_flags = std::any_of(bindings.begin(), bindings.end(),
+			[](auto const &binding) { return binding.second.update_after_bind; })
+		? VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT
+		: 0;
+				
+	VkDescriptorPoolCreateInfo poolInfo = {
+		.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+		.flags = pool_flags,
+		.maxSets = 1,
+		.poolSizeCount = static_cast<u32>(pool_sizes.size()),
+		.pPoolSizes = pool_sizes.data(),
+	};
+
+	VkDescriptorPool descriptorPool;
+	VB_VK_RESULT result = vkCreateDescriptorPool(owner->handle, &poolInfo, nullptr, &descriptorPool);
+	VB_CHECK_VK_RESULT(owner->owner->init_info.checkVkResult, result, "Failed to create descriptor pool!");
+	return descriptorPool;
+}
+
+auto DescriptorResource::CreateDescriptorSetLayout() -> VkDescriptorSetLayout {
+	VB_VLA(VkDescriptorSetLayoutBinding, layout_bindings, bindings.size());
+	VB_VLA(VkDescriptorBindingFlags, binding_flags, bindings.size());
+
+	for (u32 i = 0; auto const& [_, binding] : bindings) {
+		layout_bindings[i] = {
+			.binding = binding.binding,
+			.descriptorType = static_cast<VkDescriptorType>(binding.type),
+			.descriptorCount = binding.count,
+			.stageFlags = static_cast<VkShaderStageFlags>(binding.stage_flags),
+		};
+		binding_flags[i]  = binding.update_after_bind ? VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT : 0;
+		binding_flags[i] |= binding.partially_bound   ? VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT   : 0;
+		++i;
+	}
+
+	VkDescriptorBindingFlags layout_flags = std::any_of(bindings.cbegin(), bindings.cend(),
+			[](auto const &info) { return info.second.update_after_bind; })
+		? VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT
+		: 0;
+
+	VkDescriptorSetLayoutBindingFlagsCreateInfo bindingFlagsInfo = {
+		.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO,
+		.bindingCount = static_cast<uint32_t>(bindings.size()),
+		.pBindingFlags = binding_flags.data(),
+	};
+
+	VkDescriptorSetLayoutCreateInfo layoutInfo = {
+		.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+		.pNext = &bindingFlagsInfo,
+		.flags = layout_flags,
+		.bindingCount = static_cast<u32>(layout_bindings.size()),
+		.pBindings = layout_bindings.data(),
+	};
+
+	VkDescriptorSetLayout descriptorSetLayout;
+	VB_VK_RESULT result = vkCreateDescriptorSetLayout(owner->handle, &layoutInfo, nullptr, &descriptorSetLayout);
+	VB_CHECK_VK_RESULT(owner->owner->init_info.checkVkResult, result, "Failed to allocate descriptor set!");
+	return descriptorSetLayout;
+}
+
+auto DescriptorResource::CreateDescriptorSets() -> VkDescriptorSet {
+	VkDescriptorSetAllocateInfo setInfo{
+		.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+		.descriptorPool = pool,
+		.descriptorSetCount = 1,
+		.pSetLayouts = &layout,
+	};
+	VkDescriptorSet descriptorSet;
+	VB_VK_RESULT result = vkAllocateDescriptorSets(owner->handle, &setInfo, &descriptorSet);
+	VB_CHECK_VK_RESULT(owner->owner->init_info.checkVkResult, result, "Failed to allocate descriptor set!");
+	return descriptorSet;
 }
 
 
 void CommandResource::Create(QueueResource* queue) {
 	this->queue = queue;
-	descriptorSet = owner->bindlessDescriptorSet;
 	VkCommandPoolCreateInfo poolInfo{
 		.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
 		.flags = 0, // do not use VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT
@@ -3555,24 +3493,24 @@ void CommandResource::Create(QueueResource* queue) {
 	};
 
 	VB_VK_RESULT result = vkCreateCommandPool(owner->handle, &poolInfo, owner->owner->allocator, &pool);
-	VB_CHECK_VK_RESULT(owner->owner->initInfo.checkVkResult, result, "Failed to create command pool!");
+	VB_CHECK_VK_RESULT(owner->owner->init_info.checkVkResult, result, "Failed to create command pool!");
 
 	allocInfo.commandPool = pool;
 	result = vkAllocateCommandBuffers(owner->handle, &allocInfo, &handle);
-	VB_CHECK_VK_RESULT(owner->owner->initInfo.checkVkResult, result, "Failed to allocate command buffer!");
+	VB_CHECK_VK_RESULT(owner->owner->init_info.checkVkResult, result, "Failed to allocate command buffer!");
 
 	VkFenceCreateInfo fenceInfo{
 		.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
 		.flags = VK_FENCE_CREATE_SIGNALED_BIT,
 	};
 	result = vkCreateFence(owner->handle, &fenceInfo, owner->owner->allocator, &fence);
-	VB_CHECK_VK_RESULT(owner->owner->initInfo.checkVkResult, result, "Failed to create fence!");
+	VB_CHECK_VK_RESULT(owner->owner->init_info.checkVkResult, result, "Failed to create fence!");
 }
 
 bool Command::Copy(Buffer const& dst, void const* data, u32 size, u32 dstOfsset) {
 	auto device = resource->owner;
 	VB_LOG_TRACE("[ CmdCopy ] size: %u, offset: %u", size, device->stagingOffset);
-	if (device->initInfo.staging_buffer_size - device->stagingOffset < size) [[unlikely]] {
+	if (device->init_info.staging_buffer_size - device->stagingOffset < size) [[unlikely]] {
 		VB_LOG_WARN("Not enough size in staging buffer to copy");
 		return false;
 	}
@@ -3605,7 +3543,7 @@ void Command::Copy(Buffer const& dst, Buffer const& src, u32 size, u32 dstOffset
 bool Command::Copy(Image const& dst, void const* data, u32 size) {
 	auto device = resource->owner;
 	VB_LOG_TRACE("[ CmdCopy ] size: %u, offset: %u", size, device->stagingOffset);
-	if (device->initInfo.staging_buffer_size - device->stagingOffset < size) [[unlikely]] {
+	if (device->init_info.staging_buffer_size - device->stagingOffset < size) [[unlikely]] {
 		VB_LOG_WARN("Not enough size in staging buffer to copy");
 		return false;
 	}
@@ -3855,7 +3793,7 @@ auto DeviceResource::CreateSampler(SamplerInfo const& info) -> VkSampler {
 
 	VkSampler sampler = VK_NULL_HANDLE;
 	VB_VK_RESULT result = vkCreateSampler(handle, &samplerInfo, nullptr, &sampler);
-	VB_CHECK_VK_RESULT(owner->initInfo.checkVkResult, result, "Failed to create texture sampler!");
+	VB_CHECK_VK_RESULT(owner->init_info.checkVkResult, result, "Failed to create texture sampler!");
 
 	return sampler;
 }
@@ -3874,7 +3812,7 @@ auto DeviceResource::GetOrCreateSampler(SamplerInfo const& desc) -> VkSampler {
 
 #ifdef VB_IMGUI
 void ImGuiCheckVulkanResult(VkResult result) {
-	// VB_CHECK_VK_RESULT(instance->initInfo.checkVkResult, result, "ImGui error!");
+	// VB_CHECK_VK_RESULT(instance->init_info.checkVkResult, result, "ImGui error!");
 	CheckVkResultDefault(result, "ImGui error!");
 }
 
@@ -3885,7 +3823,7 @@ void Swapchain::CreateImGui(SampleCount sampleCount) {
 void SwapChainResource::CreateImGui(GLFWwindow* window, SampleCount sampleCount) {
 	VkFormat colorFormats[] = { VK_FORMAT_R8G8B8A8_UNORM };
 	VkFormat depthFormat =  VK_FORMAT_D32_SFLOAT;
-	ImGui_ImplVulkan_InitInfo initInfo{
+	ImGui_ImplVulkan_InitInfo init_info{
 		.Instance            = owner->owner->handle,
 		.PhysicalDevice      = owner->physicalDevice->handle,
 		.Device              = owner->handle,
@@ -3908,7 +3846,7 @@ void SwapChainResource::CreateImGui(GLFWwindow* window, SampleCount sampleCount)
 		.CheckVkResultFn     = ImGuiCheckVulkanResult,
 	};
 	ImGui_ImplGlfw_InitForVulkan(window, true);
-	ImGui_ImplVulkan_Init(&initInfo);
+	ImGui_ImplVulkan_Init(&init_info);
 }
 
 void ImGuiNewFrame() {
@@ -3917,7 +3855,7 @@ void ImGuiNewFrame() {
 }
 
 void Command::DrawImGui(void* imDrawData) {
-	ImGui_ImplVulkan_RenderDrawData(static_cast<ImDrawData*>(imDrawData), resource->buffer);
+	ImGui_ImplVulkan_RenderDrawData(static_cast<ImDrawData*>(imDrawData), resource->handle);
 }
 
 void ImGuiShutdown() {

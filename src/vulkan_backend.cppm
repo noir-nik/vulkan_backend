@@ -37,7 +37,6 @@ extern "C++" {
 // This is optional, if extern "C++" method causes ODR violations
 // NOLINTBEGIN(misc-unused-using-decls)
 export namespace VB_NAMESPACE {
-
 /* 
 	"vulkan_backend.hpp"
 */
@@ -132,7 +131,5 @@ using VB_NAMESPACE::SamplerInfo;
 using VB_NAMESPACE::MemoryBarrier;
 using VB_NAMESPACE::BufferBarrier;
 using VB_NAMESPACE::ImageBarrier;
-
-
 }
 // NOLINTEND(misc-unused-using-decls)

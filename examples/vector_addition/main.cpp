@@ -10,7 +10,7 @@ int main(){
 	// Define constants for compute shader vector addition
 	int constexpr vector_size = 64 * 1024;	
 	int constexpr workgroup_size = 16;
-	int constexpr binding_buffer = 1;
+	int constexpr binding_buffer = 0;
 
 	// Set log verbosity
 	vb::SetLogLevel(vb::LogLevel::Info);
@@ -44,15 +44,25 @@ int main(){
 		.memory = vb::Memory::GPU,
 	};
 
-	// Buffer for vector_a and vector_b
+	// Create bindless descriptor resources with 1 binding
+	vb::Descriptor descriptor = device.CreateDescriptor({{
+		{vb::DescriptorType::StorageBuffer, binding_buffer},
+	}});
+
+	// Use our descriptor for next commands.
+	// Note that this has to be done before creating any Storage buffers
+	// or Sampled or Storage images
+	device.UseDescriptor(descriptor);
+
+	// Create Buffer for vector_a and vector_b
 	vb::Buffer device_buffer_a = device.CreateBuffer(buffer_info);
 	vb::Buffer device_buffer_b = device.CreateBuffer(buffer_info);
 
-	// Buffer for result of vector addition
+	// Create Buffer for result of vector addition
 	buffer_info.usage = vb::BufferUsage::Storage | vb::BufferUsage::TransferSrc;
 	vb::Buffer device_buffer_result = device.CreateBuffer(buffer_info);
 
-	// Buffer for transfering result to CPU,
+	// Create Buffer for transfering result to CPU,
 	// we could also use staging for this
 	vb::Buffer cpu_buffer_result = device.CreateBuffer({
 		.size = vector_size * sizeof(int),
@@ -131,7 +141,8 @@ int main(){
 	int* mappedMemory = reinterpret_cast<int*>(cpu_buffer_result.GetMappedData());
 
 	// Compare result of vector addition with std::transform
-	std::transform(vector_a.begin(), vector_a.end(), vector_b.begin(), vector_a.begin(), std::plus<int>());
+	std::transform(vector_a.begin(), vector_a.end(),
+	                vector_b.begin(), vector_a.begin(), std::plus<int>());
 	assert(std::equal(vector_a.begin(), vector_a.end(), mappedMemory));
 
 	// Print first 32 elements of result

@@ -29,6 +29,7 @@ using DeviceAddress = u64;
 struct PhysicalDeviceResource;
 struct InstanceResource;
 struct DeviceResource;
+struct DescriptorResource;
 struct SwapChainResource;
 struct BufferResource;
 struct ImageResource;
@@ -47,12 +48,16 @@ struct InstanceInfo;
 
 class Buffer;
 class Command;
+class Instance;
 class Device;
 class Image;
 class Swapchain;
 class Queue;
 class Pipeline;
 
+u32 constexpr kMaxFramesInFlight = 3;
+u32 constexpr kAdditionalImages  = 0;
+u32 constexpr kStagingSize = 64 * 1024 * 1024;
 
 enum class LogLevel {
 	Trace,
@@ -61,7 +66,6 @@ enum class LogLevel {
 	Error,
 	None,
 };
-
 
 struct BufferInfo {
 	u64              size;
@@ -72,8 +76,8 @@ struct BufferInfo {
 
 class Buffer {
 	std::shared_ptr<BufferResource> resource;
-	friend class Device;
-	friend class Command;
+	friend Device;
+	friend Command;
 	friend DeviceResource;
 public:
 	auto GetResourceID() const -> u32;
@@ -87,9 +91,9 @@ public:
 class Image {
 	std::shared_ptr<ImageResource> resource;
 	friend SwapChainResource;
-	friend class Swapchain;
+	friend Swapchain;
 	friend DeviceResource;
-	friend class Command;
+	friend Command;
 public:
 	auto GetResourceID() const -> u32;
 	auto GetFormat()     const -> Format;
@@ -108,10 +112,10 @@ struct ImageInfo {
 class Queue {
 	QueueResource* resource = nullptr;
 	friend SwapChainResource;
-	friend class Swapchain;
+	friend Swapchain;
 	friend CommandResource;
 	friend DeviceResource;
-	friend class Device;
+	friend Device;
 public:
 	inline operator bool() const {
 		return resource != nullptr;
@@ -163,10 +167,11 @@ public:
 		// Additional compiler options
 		std::string_view compile_options = "";
 
-		// Do not recompile if respective 'filename'.spv exists and is up-to-date
-		bool skip_compilation = true;
+		// Option to not recompile the shader if respective 'filename'.spv exists and is up-to-date.
+		// But be careful with this, because if 'compile_options' such as define macros are changed,
+		// this might use old .spv file and cause hard to find bugs
+		bool skip_compilation = false;
 
-		friend DeviceResource;
 	};
 private:
 	std::shared_ptr<PipelineResource> resource;
@@ -272,8 +277,8 @@ public:
 
 private:
 	std::shared_ptr<CommandResource> resource;
-	friend class Device;
-	friend class Swapchain;
+	friend Device;
+	friend Swapchain;
 	friend SwapChainResource;
 	friend DeviceResource;
 };
@@ -282,20 +287,52 @@ struct SwapchainInfo {
 	void*       window;
 	Extent2D    extent;
 	Queue       queue;
-	u32         frames_in_flight  = 3;
-	u32         additional_images = 0;
+	u32         frames_in_flight  = kMaxFramesInFlight;
+	u32         additional_images = kAdditionalImages;
 	// Preferred color format, not guaranteed, get actual format after creation
 	Format      color_format      = Format::RGBA8Unorm;
 	ColorSpace  color_space       = ColorSpace::SrgbNonlinear;
 	PresentMode present_mode      = PresentMode::Mailbox;
 };
 
+class Descriptor {
+public:
+	auto GetBinding(DescriptorType type) -> u32;
+private:
+	std::shared_ptr<DescriptorResource> resource;
+	friend DeviceResource;
+	friend BufferResource;
+	friend ImageResource;
+	friend Device;
+	friend Command;
+};
+
+struct BindingInfo {
+	u32 static constexpr kBindingAuto = ~0u;
+	u32 static constexpr kMaxDescriptors = 8192;
+	// Type of descriptor (e.g., DescriptorType::Sampler)
+	DescriptorType type = DescriptorType::MaxEnum;
+	// Binding number for this type.
+	// If not specified, will be assigned automatically
+	u32 binding = kBindingAuto;
+	// Max number of descriptors for this binding
+	u32 count = kMaxDescriptors;
+	// Shader stages that can access this resource
+	ShaderStage stage_flags = ShaderStage::All;
+	// Use update after bind flag
+	bool update_after_bind = false;
+	bool partially_bound   = true;
+};
+
 class Device {
 public:
-	auto CreateImage(ImageInfo const& info)         -> Image;
-	auto CreateBuffer(BufferInfo const& info)       -> Buffer;
-	auto CreatePipeline(PipelineInfo const& info)   -> Pipeline;
-	auto CreateSwapchain(SwapchainInfo const& info) -> Swapchain;
+	auto CreateImage(ImageInfo const& info)           -> Image;
+	auto CreateBuffer(BufferInfo const& info)         -> Buffer;
+	auto CreatePipeline(PipelineInfo const& info)     -> Pipeline;
+	auto CreateSwapchain(SwapchainInfo const& info)   -> Swapchain;
+	
+	auto CreateDescriptor(std::span<BindingInfo const> bindings) -> Descriptor;
+	void UseDescriptor(Descriptor const& descriptor);
 
 	void WaitQueue(Queue const& queue);
 	void WaitIdle();
@@ -312,36 +349,14 @@ public:
 	
 private:
 	std::shared_ptr<DeviceResource> resource;
-	friend class Swapchain;
-	friend class Instance;
-};
-
-struct DescriptorInfo {
-	DescriptorType type;
-	u32            binding;
-	u32            count;
+	friend Swapchain;
+	friend Instance;
 };
 
 struct DeviceInfo {
 	std::span<QueueInfo const> queues = {{{QueueFlagBits::Graphics}}};
 
-	u32 staging_buffer_size = 64 * 1024 * 1024;
-
-	// bindless descriprors, must not collide
-	u32 binding_sampler         = 0;
-	u32 binding_buffer          = 1;
-	u32 binding_tlas            = 2;
-	u32 binding_storage_image   = 3;
-
-	std::span<DescriptorInfo const> bindings = {{
-		{DescriptorType::Sampler,       0, 1},
-		{DescriptorType::StorageBuffer, 1, 1},
-	}};
-
-	u32 max_storage_buffers     = 8192;
-	u32 max_sampled_images      = 8192;
-	u32 max_tlas                = 8192;
-	u32 max_storage_images      = 8192;
+	u32 staging_buffer_size = kStagingSize;
 
 	// Graphics pipeline library
 	bool pipeline_library       = true;
@@ -366,7 +381,7 @@ public:
 	[[nodiscard]] auto GetDirty()         -> bool;
 private:
 	std::shared_ptr<SwapChainResource> resource;
-	friend class Device;
+	friend Device;
 };
 #endif
 
@@ -374,7 +389,7 @@ class PhysicalDevice{
 	std::shared_ptr<PhysicalDeviceResource> resource;
 	friend PhysicalDeviceResource;
 	friend DeviceResource;
-	friend class Device;
+	friend Device;
 };
 
 class Instance {
@@ -388,16 +403,14 @@ auto StringFromVkResult(int result) -> char const*;
 void CheckVkResultDefault(int result, char const* message);
 
 struct InstanceInfo {
+	// Function pointer to check VkResult values
 	void (*checkVkResult)(int, char const*) = CheckVkResultDefault;
-	// LogLevel messageCallbackLevel = LogLevel::Warning;
-	
-	// Extensions
-	
+
 	// Validation
 	bool validation_layers      = false;
 	bool debug_report           = false;
 
-	// Platform
+	// Platform extensions
 	bool glfw_extensions        = false;
 };
 
