@@ -40,20 +40,32 @@
 
 #define NEWLINE "\n"
 
-#define VB_LOG_TRACE(fmt, args...) \
+#ifndef VB_NO_LOG
+
+#ifndef VB_LOG_TRACE
+#define VB_LOG_TRACE(fmt, ...) \
 	if (global_log_level <= LogLevel::Trace) \
-	std::printf(fmt NEWLINE, ## args)
+	std::printf(fmt NEWLINE, ## __VA_ARGS__)
+#endif
 
-#define VB_LOG_INFO(fmt, args...) \
+#ifndef VB_LOG_INFO
+#define VB_LOG_INFO(fmt, ...) \
 	if (global_log_level <= LogLevel::Info) \
-	std::printf(fmt NEWLINE, ## args)
+	std::printf(fmt NEWLINE, ## __VA_ARGS__)
+#endif
 
-#define VB_LOG_WARN(fmt, args...) \
+#ifndef VB_LOG_WARN
+#define VB_LOG_WARN(fmt, ...) \
 	if (global_log_level <= LogLevel::Warning) \
-	std::printf(fmt NEWLINE, ## args)
+	std::printf(fmt NEWLINE, ## __VA_ARGS__)
+#endif
 
-#define VB_LOG_ERROR(fmt, args...) \
+#ifndef VB_LOG_ERROR
+#define VB_LOG_ERROR(fmt, ...) \
 	if (global_log_level <= LogLevel::Error) \
-	std::printf(fmt NEWLINE, ## args)
+	std::printf(fmt NEWLINE, ## __VA_ARGS__)
+#endif
+
+#endif // !VB_NO_LOG
 
 #endif // VULKAN_BACKEND_UTIL_HPP_

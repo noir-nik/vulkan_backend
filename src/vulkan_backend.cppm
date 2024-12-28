@@ -38,7 +38,7 @@ extern "C++" {
 // NOLINTBEGIN(misc-unused-using-decls)
 export namespace VB_NAMESPACE {
 /* 
-	"vulkan_backend.hpp"
+	"core.hpp"
 */
 // Structs
 using VB_NAMESPACE::BufferInfo;
@@ -75,7 +75,7 @@ using VB_NAMESPACE::ImGuiShutdown;
 #endif
 
 /* 
-	"vulkan_backend_enums.hpp"
+	"enums.hpp"
 */
 using namespace Memory;
 using namespace BufferUsage;
@@ -115,7 +115,7 @@ using VB_NAMESPACE::PresentMode;
 using VB_NAMESPACE::ColorSpace;
 
 /* 
-"vulkan_backend_structs.hpp"
+"structs.hpp"
 */
 using VB_NAMESPACE::Viewport;
 using VB_NAMESPACE::Extent2D;

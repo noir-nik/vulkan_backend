@@ -722,7 +722,6 @@ struct DescriptorResource : ResourceBase<DeviceResource> {
 	VkDescriptorSet       set    = VK_NULL_HANDLE;
 
 	// Bindless Resource IDs for descriptor indexing
-	// [binding, count]
 	struct BindingInfoExt: public BindingInfo {
 		std::vector<u32> resourceIDs;
 	};
@@ -817,7 +816,7 @@ struct ImageResource : ResourceBase<DeviceResource> {
 					owner->descriptor.resource->PushID(DescriptorType::StorageImage, rid);
 				}
 				if (usage & ImageUsage::Sampled) {
-					owner->descriptor.resource->PushID(DescriptorType::SampledImage, rid);
+					owner->descriptor.resource->PushID(DescriptorType::CombinedImageSampler, rid);
 				}
 				// for (ImTextureID imguiRID : imguiRIDs) {
 					// ImGui_ImplVulkan_RemoveTexture((VkDescriptorSet)imguiRID);
@@ -862,8 +861,6 @@ struct CommandResource : ResourceBase<DeviceResource> {
 		vkDestroyFence(owner->handle, fence, owner->owner->allocator);
 	}
 };
-
-
 
 #ifdef VB_GLFW
 struct SwapChainResource: ResourceBase<DeviceResource> {
@@ -975,6 +972,10 @@ auto Instance::CreateDevice(DeviceInfo const& info) -> Device {
 
 void Device::UseDescriptor(Descriptor const& descriptor) {
 	resource->descriptor = descriptor;
+}
+
+auto Device::GetBinding(DescriptorType const type) -> u32 {
+	return resource->descriptor.GetBinding(type);
 }
 
 void Device::ResetStaging() {
@@ -1108,6 +1109,7 @@ auto DeviceResource::CreateBuffer(BufferInfo const& info) -> Buffer {
 
 	// Update bindless descriptor
 	if (usage & BufferUsage::Storage) {
+		VB_ASSERT(descriptor.resource != nullptr, "Descriptor resource not set!");
 		res->rid = descriptor.resource->PopID(DescriptorType::StorageBuffer);
 
 		VkDescriptorBufferInfo bufferInfo = {
@@ -1219,9 +1221,11 @@ auto DeviceResource::CreateImage(ImageInfo const& info) -> Image {
 		}
 	}
 	if (info.usage & ImageUsage::Sampled) {
-		res->rid = descriptor.resource->PopID(DescriptorType::SampledImage);
+		VB_ASSERT(descriptor.resource != nullptr, "Descriptor resource not set!");
+		res->rid = descriptor.resource->PopID(DescriptorType::CombinedImageSampler);
 	}
 	if (info.usage & ImageUsage::Storage) {
+		VB_ASSERT(descriptor.resource != nullptr, "Descriptor resource not set!");
 		res->rid = descriptor.resource->PopID(DescriptorType::StorageImage);
 	}
 	if (info.usage & ImageUsage::Sampled) {
@@ -1251,7 +1255,7 @@ auto DeviceResource::CreateImage(ImageInfo const& info) -> Image {
 		VkWriteDescriptorSet write = {
 			.sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
 			.dstSet          = descriptor.resource->set,
-			.dstBinding      = descriptor.resource->GetBinding(DescriptorType::SampledImage),
+			.dstBinding      = descriptor.resource->GetBinding(DescriptorType::CombinedImageSampler),
 			.dstArrayElement = image.GetResourceID(),
 			.descriptorCount = 1,
 			.descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
@@ -1350,7 +1354,7 @@ auto LoadShader(Pipeline::Stage const& stage) -> std::vector<char> {
 	std::filesystem::path const shader_path = stage.source.data;
 	std::filesystem::path out_file_path = out_file;
 	out_file_path = out_file_path.parent_path();
-	bool compilation_required = !stage.skip_compilation;
+	bool compilation_required = !stage.allow_skip_compilation;
 	
 	if (!std::filesystem::exists(out_file_path)){
 		std::filesystem::create_directories(out_file_path);
@@ -3385,7 +3389,14 @@ void DescriptorResource::Create(std::span<BindingInfo const> binding_infos) {
 				++next_binding;
 			}
 			info.binding = next_binding;
+			// specified_bindings.insert(info.binding);
+			++next_binding;
 		}
+	}
+
+	VB_LOG_INFO("SELECTED BINDINGS:");
+	for (auto const& [_, info] : bindings) {
+		VB_LOG_INFO("%u: %u", info.type, info.binding);
 	}
 	// fill with reversed indices so that 0 is at the back
 	for (auto const& binding : binding_infos) {

@@ -55,9 +55,9 @@ class Swapchain;
 class Queue;
 class Pipeline;
 
-u32 constexpr kMaxFramesInFlight = 3;
-u32 constexpr kAdditionalImages  = 0;
-u32 constexpr kStagingSize = 64 * 1024 * 1024;
+u32 constexpr inline kMaxFramesInFlight = 3;
+u32 constexpr inline kAdditionalImages  = 0;
+u32 constexpr inline kStagingSize = 64 * 1024 * 1024;
 
 enum class LogLevel {
 	Trace,
@@ -170,7 +170,7 @@ public:
 		// Option to not recompile the shader if respective 'filename'.spv exists and is up-to-date.
 		// But be careful with this, because if 'compile_options' such as define macros are changed,
 		// this might use old .spv file and cause hard to find bugs
-		bool skip_compilation = false;
+		bool allow_skip_compilation = false;
 
 	};
 private:
@@ -331,8 +331,12 @@ public:
 	auto CreatePipeline(PipelineInfo const& info)     -> Pipeline;
 	auto CreateSwapchain(SwapchainInfo const& info)   -> Swapchain;
 	
-	auto CreateDescriptor(std::span<BindingInfo const> bindings) -> Descriptor;
+	auto CreateDescriptor(std::span<BindingInfo const> bindings = {{
+		{DescriptorType::SampledImage},
+		{DescriptorType::StorageBuffer},
+	}}) -> Descriptor;
 	void UseDescriptor(Descriptor const& descriptor);
+	auto GetBinding(DescriptorType const type) -> u32;
 
 	void WaitQueue(Queue const& queue);
 	void WaitIdle();
