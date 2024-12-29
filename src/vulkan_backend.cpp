@@ -663,7 +663,7 @@ struct DeviceResource : ResourceBase<InstanceResource>, std::enable_shared_from_
 
 	using ResourceBase::ResourceBase;
 
-	auto GetName() -> char const*  { 
+	auto GetName() -> char const* { 
 		return physicalDevice->physicalProperties2.properties.deviceName;
 	}
 
@@ -886,8 +886,12 @@ struct SwapChainResource: ResourceBase<DeviceResource> {
 	void DestroyImGui();
 #endif
 
-	inline auto GetImageAvailableSemaphore(u32 current_frame) -> VkSemaphore { return image_available_semaphores[current_frame]; }
-	inline auto GetRenderFinishedSemaphore(u32 current_frame) -> VkSemaphore { return render_finished_semaphores[current_frame]; }
+	inline auto GetImageAvailableSemaphore(u32 current_frame) -> VkSemaphore {
+		return image_available_semaphores[current_frame];
+	}
+	inline auto GetRenderFinishedSemaphore(u32 current_frame) -> VkSemaphore {
+		return render_finished_semaphores[current_frame];
+	}
 	auto SupportsFormat(VkFormat format, VkImageTiling tiling, VkFormatFeatureFlags features) -> bool;
 	void CreateSurfaceFormats();
 	void ChooseSurfaceFormat();
@@ -965,7 +969,7 @@ auto CreateInstance(InstanceInfo const& info) -> Instance {
 
 auto Instance::CreateDevice(DeviceInfo const& info) -> Device {
 	Device device;
-	device.resource = MakeResource<DeviceResource>(resource.get(), "device");
+	device.resource = MakeResource<DeviceResource>(resource.get(), "device ");
 	device.resource->Create(info);
 	return device;
 }
@@ -1828,7 +1832,8 @@ void DeviceResource::PipelineLibrary::CreatePreRasterizationShaders(PreRasteriza
 	VkGraphicsPipelineCreateInfo pipelineLibraryInfo {
 		.sType               = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
 		.pNext               = &libraryInfo,
-		.flags               = VK_PIPELINE_CREATE_LIBRARY_BIT_KHR | VK_PIPELINE_CREATE_RETAIN_LINK_TIME_OPTIMIZATION_INFO_BIT_EXT,
+		.flags               = VK_PIPELINE_CREATE_LIBRARY_BIT_KHR |
+								VK_PIPELINE_CREATE_RETAIN_LINK_TIME_OPTIMIZATION_INFO_BIT_EXT,
 		.stageCount          = static_cast<u32>(shader_stages.size()),
 		.pStages             = shader_stages.data(),
 		.pViewportState      = &viewportState,
@@ -1839,7 +1844,8 @@ void DeviceResource::PipelineLibrary::CreatePreRasterizationShaders(PreRasteriza
 	VkPipeline pipeline;
 	VB_VK_RESULT res = vkCreateGraphicsPipelines(device->handle, device->pipelineCache, 1,
 		&pipelineLibraryInfo, device->owner->allocator, &pipeline);
-	VB_CHECK_VK_RESULT(device->owner->init_info.checkVkResult, res, "Failed to create pre-rasterization shaders!");
+	VB_CHECK_VK_RESULT(device->owner->init_info.checkVkResult, res,
+		"Failed to create pre-rasterization shaders!");
 	preRasterizationShaders.emplace(info, pipeline);
 }
 
@@ -2765,6 +2771,8 @@ void DeviceResource::Create(DeviceInfo const& info) {
 	// }
 	VB_ASSERT(this->physicalDevice != nullptr, "Failed to find suitable device");
 
+	name += physicalDevice->physicalProperties2.properties.deviceName;
+
 #ifdef VB_GLFW
 	// Destroy test surfaces
 	VB_LOG_TRACE("Destroying %zu test surfaces", surfaces.size());
@@ -2817,11 +2825,11 @@ void DeviceResource::Create(DeviceInfo const& info) {
 
 	// request features if available
 	VkPhysicalDeviceGraphicsPipelineLibraryFeaturesEXT graphicsPipelineLibraryFeatures;
-	if (init_info.pipeline_library) {
+	if (init_info.pipeline_library && physicalDevice->graphicsPipelineLibraryFeatures.graphicsPipelineLibrary) {
 		graphicsPipelineLibraryFeatures = {
 			.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_GRAPHICS_PIPELINE_LIBRARY_FEATURES_EXT,
 			.pNext = features2.pNext,
-			.graphicsPipelineLibrary = physicalDevice->graphicsPipelineLibraryFeatures.graphicsPipelineLibrary,
+			.graphicsPipelineLibrary = true,
 		}; features2.pNext = &graphicsPipelineLibraryFeatures;
 		requiredExtensions.push_back(VK_KHR_PIPELINE_LIBRARY_EXTENSION_NAME);
 		requiredExtensions.push_back(VK_EXT_GRAPHICS_PIPELINE_LIBRARY_EXTENSION_NAME);
@@ -2872,11 +2880,11 @@ void DeviceResource::Create(DeviceInfo const& info) {
 	}; features2.pNext = &dynamicRenderingFeatures;
 
 	VkPhysicalDeviceDynamicRenderingUnusedAttachmentsFeaturesEXT unusedAttachmentFeatures;
-	if (init_info.unused_attachments) {
+	if (init_info.unused_attachments && physicalDevice->unusedAttachmentFeatures.dynamicRenderingUnusedAttachments) {
 		unusedAttachmentFeatures = {
 			.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_UNUSED_ATTACHMENTS_FEATURES_EXT,
 			.pNext = features2.pNext,
-			.dynamicRenderingUnusedAttachments = physicalDevice->unusedAttachmentFeatures.dynamicRenderingUnusedAttachments,
+			.dynamicRenderingUnusedAttachments = true,
 		}; features2.pNext = &unusedAttachmentFeatures;
 		requiredExtensions.push_back(VK_EXT_DYNAMIC_RENDERING_UNUSED_ATTACHMENTS_EXTENSION_NAME);
 	}
@@ -3394,7 +3402,7 @@ void DescriptorResource::Create(std::span<BindingInfo const> binding_infos) {
 		}
 	}
 
-	VB_LOG_INFO("SELECTED BINDINGS:");
+	VB_LOG_INFO("[ Descriptor ] Selected bindings:");
 	for (auto const& [_, info] : bindings) {
 		VB_LOG_INFO("%u: %u", info.type, info.binding);
 	}
@@ -3640,8 +3648,12 @@ void Command::Barrier(Image const& img, ImageBarrier const& barrier) {
 		.srcAccessMask       = (VkAccessFlags2)         barrier.memoryBarrier.srcAccessMask,
 		.dstStageMask        = (VkPipelineStageFlags2)  barrier.memoryBarrier.dstStageMask,
 		.dstAccessMask       = (VkAccessFlags2)         barrier.memoryBarrier.dstAccessMask,
-		.oldLayout           = (VkImageLayout)         (barrier.oldLayout == ImageLayout::MaxEnum ? img.resource->layout : barrier.oldLayout),
-		.newLayout           = (VkImageLayout)         (barrier.newLayout == ImageLayout::MaxEnum ? img.resource->layout : barrier.newLayout),
+		.oldLayout           = (VkImageLayout)(barrier.oldLayout == ImageLayout::MaxEnum
+									? img.resource->layout
+									: barrier.oldLayout),
+		.newLayout           = (VkImageLayout)(barrier.newLayout == ImageLayout::MaxEnum
+									? img.resource->layout
+									: barrier.newLayout),
 		.srcQueueFamilyIndex = barrier.srcQueueFamilyIndex,
 		.dstQueueFamilyIndex = barrier.dstQueueFamilyIndex,
 		.image               = img.resource->handle,
@@ -3716,7 +3728,8 @@ void Command::ClearColorImage(Image const& img, ClearColorValue const& color) {
 		.layerCount = VK_REMAINING_ARRAY_LAYERS,
 	};
 
-	vkCmdClearColorImage(resource->handle, img.resource->handle, (VkImageLayout)img.resource->layout, &clearColor, 1, &range);
+	vkCmdClearColorImage(resource->handle, img.resource->handle,
+		(VkImageLayout)img.resource->layout, &clearColor, 1, &range);
 }
 
 void Command::Blit(BlitInfo const& info) {
@@ -3790,7 +3803,9 @@ auto DeviceResource::CreateSampler(SamplerInfo const& info) -> VkSampler {
 		.addressModeW = CAST(VkSamplerAddressMode, info.wrapW),
 		.mipLodBias = 0.0f,
 
-		.anisotropyEnable = info.anisotropyEnable == false ? VK_FALSE : physicalDevice->physicalFeatures2.features.samplerAnisotropy,
+		.anisotropyEnable = info.anisotropyEnable == false
+							? VK_FALSE
+							: physicalDevice->physicalFeatures2.features.samplerAnisotropy,
 		.maxAnisotropy = info.maxAnisotropy,
 		.compareEnable = info.compareEnable == false ? VK_FALSE : VK_TRUE,
 		.compareOp = (VkCompareOp)info.compareOp,
@@ -3834,6 +3849,10 @@ void Swapchain::CreateImGui(SampleCount sampleCount) {
 void SwapChainResource::CreateImGui(GLFWwindow* window, SampleCount sampleCount) {
 	VkFormat colorFormats[] = { VK_FORMAT_R8G8B8A8_UNORM };
 	VkFormat depthFormat =  VK_FORMAT_D32_SFLOAT;
+	u32 min_images =
+			surface_capabilities.minImageCount >= 2
+		? surface_capabilities.minImageCount
+		: 2u;
 	ImGui_ImplVulkan_InitInfo init_info{
 		.Instance            = owner->owner->handle,
 		.PhysicalDevice      = owner->physicalDevice->handle,
@@ -3841,7 +3860,7 @@ void SwapChainResource::CreateImGui(GLFWwindow* window, SampleCount sampleCount)
 		.QueueFamily         = commands[0].resource->queue->familyIndex,
 		.Queue               = commands[0].resource->queue->handle,
 		.DescriptorPool      = owner->imguiDescriptorPool,
-		.MinImageCount       = surface_capabilities.minImageCount,
+		.MinImageCount       = min_images,
 		.ImageCount          = (u32)images.size(),
 		// .MSAASamples         = (VkSampleCountFlagBits)std::min(device->physicalDevice->maxSamples, sampleCount),
 		.MSAASamples         = VK_SAMPLE_COUNT_1_BIT,
