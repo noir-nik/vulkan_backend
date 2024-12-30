@@ -3402,9 +3402,9 @@ void DescriptorResource::Create(std::span<BindingInfo const> binding_infos) {
 		}
 	}
 
-	VB_LOG_INFO("[ Descriptor ] Selected bindings:");
+	VB_LOG_TRACE("[ Descriptor ] Selected bindings:");
 	for (auto const& [_, info] : bindings) {
-		VB_LOG_INFO("%u: %u", info.type, info.binding);
+		VB_LOG_TRACE("%u: %u", info.type, info.binding);
 	}
 	// fill with reversed indices so that 0 is at the back
 	for (auto const& binding : binding_infos) {

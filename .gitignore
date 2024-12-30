@@ -6,6 +6,8 @@
 .vscode/
 .vscode/*
 
+build/
+
 *.spv
 *.so
 *.so.*

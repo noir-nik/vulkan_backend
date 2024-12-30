@@ -1,0 +1,5 @@
+file(GLOB EXAMPLE_DIRS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} *)
+list(FILTER EXAMPLE_DIRS EXCLUDE REGEX "CMakeLists.txt")
+foreach(example_dir ${EXAMPLE_DIRS})
+    add_subdirectory(${example_dir})
+endforeach()

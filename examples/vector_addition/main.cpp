@@ -147,11 +147,13 @@ int main(){
 
 	// Print first 32 elements of result
 	// the result should be {1, 2, 3, ..., 32}
+	std::printf("Result is:\n");
 	int print_size = std::min(vector_size, 32);
 	for (int i = 0; i < print_size; ++i) {
 		std::printf("%d ", mappedMemory[i]);
 	}
 	std::printf("\n");
+	std::printf("Success!\n");
 
 	// Clean up.
 	// No clean up is needed! Everithing is freed automatically with custom deleters
