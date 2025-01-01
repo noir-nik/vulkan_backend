@@ -295,6 +295,9 @@ struct ResourceDeleter {
 	}
 };
 
+// We could use std::allocate_shared to avoid double allocation in std::shared_ptr
+// constructor but in that case control block would be in same allocation with Resource
+// and memomy would not be freed upon destruction if a single weak_ptr exists
 template<typename Res, typename Owner>
 requires std::is_base_of_v<std::enable_shared_from_this<Owner>, Owner> && (!std::same_as<Res, Owner>)
 auto MakeResource(Owner* owner_ptr, std::string_view const name = "") -> std::shared_ptr<Res> {
@@ -2378,11 +2381,11 @@ void InstanceResource::Create(InstanceInfo const& info){
 		vkEnumerateInstanceLayerProperties(&layerCount, layers.data());
 
 		// active default khronos validation layer
-		char const* validation_layer_name = "VK_LAYER_KHRONOS_validation";
+		std::string_view constexpr validation_layer_name("VK_LAYER_KHRONOS_validation");
 		bool khronosAvailable = false;
 		for (size_t i = 0; i < layerCount; i++) {
 			activeLayers[i] = false;
-			if (std::strcmp(validation_layer_name, layers[i].layerName) == 0) {
+			if (validation_layer_name == layers[i].layerName) {
 				activeLayers[i] = true;
 				khronosAvailable = true;
 				break;
@@ -2463,7 +2466,7 @@ void InstanceResource::Create(InstanceInfo const& info){
 		validationFeaturesInfo = {
 			.sType = VK_STRUCTURE_TYPE_VALIDATION_FEATURES_EXT,
 			.pNext                         = createInfo.pNext,
-			.enabledValidationFeatureCount = VB_ARRAY_SIZE(enableFeatures),
+			.enabledValidationFeatureCount = std::size(enableFeatures),
 			.pEnabledValidationFeatures    = enableFeatures,
 		};
 		createInfo.pNext = &validationFeaturesInfo;
@@ -2978,7 +2981,7 @@ void DeviceResource::Create(DeviceInfo const& info) {
 		.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
 		.flags         = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT,
 		.maxSets       = 1024u,
-		.poolSizeCount = VB_ARRAY_SIZE(imguiPoolSizes),
+		.poolSizeCount = std::size(imguiPoolSizes),
 		.pPoolSizes    = imguiPoolSizes,
 	};
 

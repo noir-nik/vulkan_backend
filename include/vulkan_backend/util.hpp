@@ -19,8 +19,6 @@
 	std::span<type> name(name##_vla.data(), count)
 #endif
 
-#define VB_ARRAY_SIZE(a) (sizeof(a) / sizeof(a[0]))
-
 #define VB_VK_RESULT [[maybe_unused]] VkResult
 
 #ifdef VB_DISABLE_VK_RESULT_CHECK
