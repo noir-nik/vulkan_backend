@@ -36,12 +36,24 @@ target_include_directories(${PROJECT_NAME} PUBLIC ${INCLUDE_DIRS})
 
 target_link_libraries(${PROJECT_NAME} PRIVATE Vulkan::Vulkan)
 
+option(VB_USE_VULKAN_MODULE OFF)
+option(VB_BUILD_CPP_MODULE OFF)
+
+add_definitions(
+	-DVULKAN_HPP_NO_EXCEPTIONS
+	-DVULKAN_HPP_RAII_NO_EXCEPTIONS
+	-DVULKAN_HPP_NO_SMART_HANDLE
+	-DVULKAN_HPP_NO_CONSTRUCTORS
+	-DVULKAN_HPP_NO_UNION_CONSTRUCTORS
+)
+
 if(VB_BUILD_CPP_MODULE)
 	if(VB_MODULES_AVAILABLE)
+
 		add_library(vulkan_backend_module)
 		add_library(vulkan_backend::module ALIAS vulkan_backend_module)
 		
-		if (VB_USE_STD_MODULE)
+		if (VB_USE_STD_MODULE OR VB_USE_VULKAN_MODULE)
 			target_compile_features(vulkan_backend_module PRIVATE cxx_std_23 INTERFACE cxx_std_20)
 		else()
 			target_compile_features(vulkan_backend_module PUBLIC cxx_std_20)
@@ -64,4 +76,29 @@ endif()
 # Examples
 if (VB_BUILD_EXAMPLES)
 	add_subdirectory(examples)
+endif()
+
+# Vulkan-hpp
+if (${VB_USE_VULKAN_MODULE})
+
+	if( ${Vulkan_VERSION} VERSION_LESS "1.3.256" )
+	message( FATAL_ERROR "Minimum required Vulkan version for C++ modules is 1.3.256. "
+		"Found ${Vulkan_VERSION}."
+	)
+	endif()
+
+	add_library( VulkanHppModule )
+
+	target_sources( VulkanHppModule PUBLIC
+		FILE_SET CXX_MODULES
+		BASE_DIRS ${Vulkan_INCLUDE_DIR}
+		FILES ${Vulkan_INCLUDE_DIR}/vulkan/vulkan.cppm
+	)
+
+	target_compile_features( VulkanHppModule PUBLIC cxx_std_23 )
+	target_link_libraries( VulkanHppModule PUBLIC Vulkan::Vulkan )
+
+	target_link_libraries( ${PROJECT_NAME} PRIVATE VulkanHppModule )
+	target_compile_definitions(${PROJECT_NAME} PUBLIC "VB_USE_VULKAN_MODULE=$<BOOL:${VB_USE_VULKAN_MODULE}>")
+
 endif()

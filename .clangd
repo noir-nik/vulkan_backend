@@ -3,4 +3,5 @@ CompileFlags:
     -std=c++20,
     -Iinclude,
     -Ideps/VulkanMemoryAllocator/include,
+    -fmodule-file=vulkan_hpp=build/CMakeFiles/VulkanHppModule.dir/vulkan_hpp.pcm,
   ]

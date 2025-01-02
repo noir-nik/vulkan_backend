@@ -13,6 +13,12 @@
 import std;
 #endif
 
+#if !defined(VB_USE_VULKAN_MODULE) || !VB_USE_VULKAN_MODULE
+#include <vulkan/vulkan.hpp>
+#else
+import vulkan_hpp;
+#endif
+
 #include <vulkan/vulkan.h>
 
 #ifndef _VB_EXT_MODULES
@@ -41,7 +47,6 @@ import glfw;
 #endif //_VB_EXT_MODULES
 
 #include <vulkan_backend/config.hpp>
-#include <vulkan_backend/enums.hpp>
 #include <vulkan_backend/structs.hpp>
 #include <vulkan_backend/core.hpp>
 #include <vulkan_backend/util.hpp>
@@ -55,188 +60,6 @@ namespace VB_NAMESPACE {
 u32 constexpr NullRID = ~0;
 
 LogLevel global_log_level = LogLevel::Trace;
-
-namespace Cast {
-
-inline constexpr auto VkFormat(Format value) -> VkFormat {
-	switch (value) {
-		case Format::Undefined:        return VK_FORMAT_UNDEFINED;
-
-		case Format::R8Unorm:          return VK_FORMAT_R8_UNORM;
-
-		case Format::RGBA8Unorm:       return VK_FORMAT_R8G8B8A8_UNORM;
-		case Format::RGBA8Srgb:        return VK_FORMAT_R8G8B8A8_SRGB;
-		case Format::BGRA8Unorm:       return VK_FORMAT_B8G8R8A8_UNORM;
-		case Format::BGRA8Srgb:        return VK_FORMAT_B8G8R8A8_SRGB;
-		case Format::RGBA16Sfloat:     return VK_FORMAT_R16G16B16A16_SFLOAT;
-
-		case Format::RG32Sfloat:       return VK_FORMAT_R32G32_SFLOAT;
-		case Format::RGB32Sfloat:      return VK_FORMAT_R32G32B32_SFLOAT;
-		case Format::RGBA32Sfloat:     return VK_FORMAT_R32G32B32A32_SFLOAT;
-
-		case Format::D16Unorm:         return VK_FORMAT_D16_UNORM;
-		case Format::D32Sfloat:        return VK_FORMAT_D32_SFLOAT;
-		case Format::D24UnormS8Uint:  return VK_FORMAT_D24_UNORM_S8_UINT;
-		default: return VK_FORMAT_UNDEFINED;
-	}
-	return VK_FORMAT_UNDEFINED;
-}
-
-inline constexpr auto VkOffset3D(Offset3D value) -> VkOffset3D {
-	return { value.x, value.y, value.z };
-}
-
-inline constexpr auto VkExtent3D(Extent3D value) -> VkExtent3D {
-	return { value.width, value.height, value.depth };
-}
-
-inline constexpr auto VkClearColorValue(ClearColorValue value) -> VkClearColorValue {
-	return { {value.float32[0], value.float32[1], value.float32[2], value.float32[3]} };
-}
-
-inline constexpr auto VkAttachmentLoadOp(LoadOp value) -> VkAttachmentLoadOp {
-	switch (value) { 
-		case LoadOp::Load:     return VK_ATTACHMENT_LOAD_OP_LOAD;
-		[[likely]] 
-		case LoadOp::Clear:    return VK_ATTACHMENT_LOAD_OP_CLEAR;
-		case LoadOp::DontCare: return VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-		case LoadOp::NoneExt:  return VK_ATTACHMENT_LOAD_OP_NONE_EXT;
-		default: VB_ASSERT(0, "Invalid LoadOp value");
-	}
-	return VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-}
-
-inline constexpr auto VkAttachmentStoreOp(StoreOp value) -> VkAttachmentStoreOp {
-	switch (value) {
-		[[likely]] 
-		case StoreOp::Store:    return VK_ATTACHMENT_STORE_OP_STORE;
-		case StoreOp::DontCare: return VK_ATTACHMENT_STORE_OP_DONT_CARE;
-		case StoreOp::None:     return VK_ATTACHMENT_STORE_OP_NONE;
-		default: VB_ASSERT(0, "Invalid StoreOp value");
-	}
-	return VK_ATTACHMENT_STORE_OP_DONT_CARE;
-}
-
-inline constexpr auto VkFilter(Filter value) -> VkFilter {
-	switch (value) {
-		case Filter::Nearest:   return VK_FILTER_NEAREST;
-		[[likely]]
-		case Filter::Linear:    return VK_FILTER_LINEAR;
-		case Filter::Cubic_Ext: return VK_FILTER_CUBIC_EXT;
-		default: VB_ASSERT(0, "Invalid Filter value");
-	}
-	return VK_FILTER_LINEAR;
-}
-
-inline constexpr auto VkSamplerMipmapMode(MipmapMode value) -> VkSamplerMipmapMode {
-	switch (value) {
-		case MipmapMode::Nearest: return VK_SAMPLER_MIPMAP_MODE_NEAREST;
-		[[likely]]
-		case MipmapMode::Linear:  return VK_SAMPLER_MIPMAP_MODE_LINEAR;
-		default: VB_ASSERT(0, "Invalid MipmapMode value");
-	}
-	return VK_SAMPLER_MIPMAP_MODE_LINEAR;
-}
-
-inline constexpr auto VkSamplerAddressMode(WrapMode value) -> VkSamplerAddressMode {
-	switch (value) {
-		[[likely]]
-		case WrapMode::Repeat:            return VK_SAMPLER_ADDRESS_MODE_REPEAT;
-		case WrapMode::MirroredRepeat:    return VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT;
-		case WrapMode::ClampToEdge:       return VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-		case WrapMode::ClampToBorder:     return VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
-		case WrapMode::MirrorClampToEdge: return VK_SAMPLER_ADDRESS_MODE_MIRROR_CLAMP_TO_EDGE;
-		default: VB_ASSERT(0, "Invalid WrapMode value");
-	}
-	return VK_SAMPLER_ADDRESS_MODE_REPEAT;
-}
-
-inline constexpr auto VkImageLayout(ImageLayout value) -> VkImageLayout {
-    switch (value) {
-        case ImageLayout::Undefined:                      return VK_IMAGE_LAYOUT_UNDEFINED;
-        case ImageLayout::General:                        return VK_IMAGE_LAYOUT_GENERAL;
-        case ImageLayout::ColorAttachment:                return VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-        case ImageLayout::DepthStencilAttachment:         return VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-        case ImageLayout::DepthStencilRead:               return VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
-        case ImageLayout::ShaderRead:                     return VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        case ImageLayout::TransferSrc:                    return VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-        case ImageLayout::TransferDst:                    return VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-        case ImageLayout::Preinitialized:                 return VK_IMAGE_LAYOUT_PREINITIALIZED;
-        case ImageLayout::DepthReadOnlyStencilAttachment: return VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_STENCIL_ATTACHMENT_OPTIMAL;
-        case ImageLayout::DepthAttachmentStencilRead:     return VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_STENCIL_READ_ONLY_OPTIMAL;
-        case ImageLayout::DepthAttachment:                return VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
-        case ImageLayout::DepthReadOnly:                  return VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL;
-        case ImageLayout::StencilAttachment:              return VK_IMAGE_LAYOUT_STENCIL_ATTACHMENT_OPTIMAL;
-        case ImageLayout::StencilReadOnly:                return VK_IMAGE_LAYOUT_STENCIL_READ_ONLY_OPTIMAL;
-        case ImageLayout::ReadOnly:                       return VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL;
-        case ImageLayout::Attachment:                     return VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL;
-        case ImageLayout::Present:                        return VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-        default: VB_ASSERT(0, "Invalid ImageLayout value");
-    }
-    return VK_IMAGE_LAYOUT_UNDEFINED;
-}
-
-inline constexpr auto VkBufferUsageFlags(BufferUsageFlags value) -> VkBufferUsageFlags {
-	::VkBufferUsageFlags flags{};
-	if(value & BufferUsage::TransferSrc)
-		flags |= VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
-	if(value & BufferUsage::TransferDst)
-		flags |= VK_BUFFER_USAGE_TRANSFER_DST_BIT;
-	if(value & BufferUsage::UniformTexel)
-		flags |= VK_BUFFER_USAGE_UNIFORM_TEXEL_BUFFER_BIT;
-	if(value & BufferUsage::StorageTexel)
-		flags |= VK_BUFFER_USAGE_STORAGE_TEXEL_BUFFER_BIT;
-	if(value & BufferUsage::Uniform)
-		flags |= VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
-	if(value & BufferUsage::Storage)
-		flags |= VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
-	if(value & BufferUsage::Index)
-		flags |= VK_BUFFER_USAGE_INDEX_BUFFER_BIT;
-	if(value & BufferUsage::Vertex)
-		flags |= VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
-	if(value & BufferUsage::Indirect)
-		flags |= VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT;
-	if(value & BufferUsage::Address)
-		flags |= VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
-	if(value & BufferUsage::VideoDecodeSrcKHR)
-		flags |= VK_BUFFER_USAGE_VIDEO_DECODE_SRC_BIT_KHR;
-	if(value & BufferUsage::VideoDecodeDstKHR)
-		flags |= VK_BUFFER_USAGE_VIDEO_DECODE_DST_BIT_KHR;
-	if(value & BufferUsage::TransformFeedbackBufferEXT)
-		flags |= VK_BUFFER_USAGE_TRANSFORM_FEEDBACK_BUFFER_BIT_EXT;
-	if(value & BufferUsage::TransformFeedbackCounterBufferEXT)
-		flags |= VK_BUFFER_USAGE_TRANSFORM_FEEDBACK_COUNTER_BUFFER_BIT_EXT;
-	if(value & BufferUsage::ConditionalRenderingEXT)
-		flags |= VK_BUFFER_USAGE_CONDITIONAL_RENDERING_BIT_EXT;
-	if(value & BufferUsage::AccelerationStructureBuildInputReadOnlyKHR)
-		flags |= VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR;
-	if(value & BufferUsage::AccelerationStructureStorageKHR)
-		flags |= VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR;
-	if(value & BufferUsage::ShaderBindingTableKHR)
-		flags |= VK_BUFFER_USAGE_SHADER_BINDING_TABLE_BIT_KHR;
-	if(value & BufferUsage::VideoEncodeDstKHR)
-		flags |= VK_BUFFER_USAGE_VIDEO_ENCODE_DST_BIT_KHR;
-	if(value & BufferUsage::VideoEncodeSrcKHR)
-		flags |= VK_BUFFER_USAGE_VIDEO_ENCODE_SRC_BIT_KHR;
-	if(value & BufferUsage::SamplerDescriptorBufferEXT)
-		flags |= VK_BUFFER_USAGE_SAMPLER_DESCRIPTOR_BUFFER_BIT_EXT;
-	if(value & BufferUsage::ResourceDescriptorBufferEXT)
-		flags |= VK_BUFFER_USAGE_RESOURCE_DESCRIPTOR_BUFFER_BIT_EXT;
-	if(value & BufferUsage::PushDescriptorsDescriptorBufferEXT)
-		flags |= VK_BUFFER_USAGE_PUSH_DESCRIPTORS_DESCRIPTOR_BUFFER_BIT_EXT;
-	if(value & BufferUsage::MicromapBuildInputReadOnlyEXT)
-		flags |= VK_BUFFER_USAGE_MICROMAP_BUILD_INPUT_READ_ONLY_BIT_EXT;
-	if(value & BufferUsage::MicromapStorageEXT)
-		flags |= VK_BUFFER_USAGE_MICROMAP_STORAGE_BIT_EXT;
-	if(value & BufferUsage::RayTracingNV)
-		flags |= VK_BUFFER_USAGE_RAY_TRACING_BIT_NV;
-	if(value & BufferUsage::ShaderDeviceAddressEXT)
-		flags |= VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT_EXT;
-	if(value & BufferUsage::ShaderDeviceAddressKHR)
-		flags |= VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT_KHR;
-	return flags;
-}
-} // namespace Cast
 
 namespace {
 	static inline auto HashCombine(size_t hash, size_t x) -> size_t {
@@ -341,7 +164,7 @@ struct PhysicalDeviceResource : NoCopy {
 	std::vector<VkQueueFamilyProperties> availableFamilies;
 
 	// Max samples
-	SampleCount maxSamples = SampleCount::_1;
+	SampleCount maxSamples = SampleCount::e1;
 
 	// desiredFlags: required queue flags (strict)
 	// undesiredFlags: undesired queue flags (strict)
@@ -508,14 +331,14 @@ struct DeviceResource : ResourceBase<InstanceResource>, std::enable_shared_from_
 
 	struct PipelineLibrary {
 		struct VertexInputInfo {
-			std::span<Format const> vertexAttributes;
+			std::span<vk::Format const> vertexAttributes;
 			bool lineTopology = false;
 		};
 
 		struct PreRasterizationInfo {
 			VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
 			bool lineTopology = false;
-			CullModeFlags cullMode = CullMode::None;
+			CullModeFlags cullMode = CullMode::eNone;
 			std::span<Pipeline::Stage const> stages;
 		};
 
@@ -527,15 +350,15 @@ struct DeviceResource : ResourceBase<InstanceResource>, std::enable_shared_from_
 
 		struct FragmentOutputInfo {
 			VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
-			std::span<Format const> colorFormats;
+			std::span<vk::Format const> colorFormats;
 			bool useDepth;
-			Format depthFormat;
+			vk::Format depthFormat;
 			SampleCount samples;
 		};
 
-		static inline auto FormatSpanHash(std::span<Format const> formats) -> size_t {
+		static inline auto FormatSpanHash(std::span<vk::Format const> formats) -> size_t {
 			size_t hash = 0;
-			for (Format format: formats) {
+			for (vk::Format format: formats) {
 				hash = HashCombine(hash, static_cast<size_t>(format));
 			}
 			return hash;
@@ -570,7 +393,7 @@ struct DeviceResource : ResourceBase<InstanceResource>, std::enable_shared_from_
 					seed = HashCombine(seed, StageHash(stage));
 				}
 				seed = HashCombine(seed, info.lineTopology);
-				seed = HashCombine(seed, info.cullMode);
+				seed = HashCombine(seed, CullModeFlags::MaskType(info.cullMode));
 				return seed;
 			}
 
@@ -768,7 +591,7 @@ struct BufferResource : ResourceBase<DeviceResource> {
 	VmaAllocation allocation;
 
 	u64 size;
-	BufferUsageFlags usage;
+	vk::BufferUsageFlags usage;
 	MemoryFlags memory;
 
 	using ResourceBase::ResourceBase;
@@ -778,7 +601,7 @@ struct BufferResource : ResourceBase<DeviceResource> {
 		VB_LOG_TRACE("[ Free ] type = %s, name = %s", GetType(), GetName());
 		vmaDestroyBuffer(owner->vmaAllocator, handle, allocation);
 		if (rid != NullRID) {
-			owner->descriptor.resource->PushID(DescriptorType::StorageBuffer, rid);
+			owner->descriptor.resource->PushID(DescriptorType::eStorageBuffer, rid);
 		}
 	}
 };
@@ -790,16 +613,16 @@ struct ImageResource : ResourceBase<DeviceResource> {
 	VkImageView view;
 	VmaAllocation allocation;
 	bool fromSwapchain = false;
-	SampleCount samples = SampleCount::_1;
+	SampleCount samples = SampleCount::e1;
 	std::vector<VkImageView> layersView;
 #ifdef VB_IMGUI
 	std::vector<ImTextureID> imguiRIDs;
 #endif
 	Extent3D extent{};
-	ImageUsageFlags usage;
-	Format format;
+	vk::ImageUsageFlags usage;
+	vk::Format format;
 	ImageLayout layout;
-	AspectFlags aspect;
+	vk::ImageAspectFlags aspect;
 	u32 layers = 1;
 
 	using ResourceBase::ResourceBase;
@@ -815,11 +638,11 @@ struct ImageResource : ResourceBase<DeviceResource> {
 			vkDestroyImageView(owner->handle, view, owner->owner->allocator);
 			vmaDestroyImage(owner->vmaAllocator, handle, allocation);
 			if (rid != NullRID) {
-				if (usage & ImageUsage::Storage) {
-					owner->descriptor.resource->PushID(DescriptorType::StorageImage, rid);
+				if (usage & vk::ImageUsageFlagBits::eStorage) {
+					owner->descriptor.resource->PushID(DescriptorType::eStorageImage, rid);
 				}
-				if (usage & ImageUsage::Sampled) {
-					owner->descriptor.resource->PushID(DescriptorType::CombinedImageSampler, rid);
+				if (usage & vk::ImageUsageFlagBits::eSampled) {
+					owner->descriptor.resource->PushID(DescriptorType::eCombinedImageSampler, rid);
 				}
 				// for (ImTextureID imguiRID : imguiRIDs) {
 					// ImGui_ImplVulkan_RemoveTexture((VkDescriptorSet)imguiRID);
@@ -953,7 +776,7 @@ auto Image::GetResourceID() const -> u32 {
 	return resource->rid;
 }
 
-auto Image::GetFormat() const -> Format {
+auto Image::GetFormat() const -> vk::Format {
 	return resource->format;
 }
 
@@ -1061,29 +884,29 @@ auto Descriptor::GetBinding(DescriptorType type) -> u32 {
 }
 
 auto DeviceResource::CreateBuffer(BufferInfo const& info) -> Buffer {
-	BufferUsageFlags usage = info.usage;
+	vk::BufferUsageFlags usage = info.usage;
 	u32 size = info.size;
 
-	if (usage & BufferUsage::Vertex) {
-		usage |= BufferUsage::TransferDst;
+	if (usage & BufferUsage::eVertexBuffer) {
+		usage |= BufferUsage::eTransferDst;
 	}
 
-	if (usage & BufferUsage::Index) {
-		usage |= BufferUsage::TransferDst;
+	if (usage & BufferUsage::eIndexBuffer) {
+		usage |= BufferUsage::eTransferDst;
 	}
 
-	if (usage & BufferUsage::Storage) {
-		usage |= BufferUsage::Address;
+	if (usage & BufferUsage::eStorageBuffer) {
+		usage |= BufferUsage::eShaderDeviceAddress;
 		size += size % physicalDevice->physicalProperties2.properties.limits.minStorageBufferOffsetAlignment;
 	}
 
-	if (usage & BufferUsage::AccelerationStructureBuildInputReadOnlyKHR) {
-		usage |= BufferUsage::Address;
-		usage |= BufferUsage::TransferDst;
+	if (usage & BufferUsage::eAccelerationStructureBuildInputReadOnlyKHR) {
+		usage |= BufferUsage::eShaderDeviceAddress;
+		usage |= BufferUsage::eTransferDst;
 	}
 
-	if (usage & BufferUsage::AccelerationStructureStorageKHR) {
-		usage |= BufferUsage::Address;
+	if (usage & BufferUsage::eAccelerationStructureStorageKHR) {
+		usage |= BufferUsage::eShaderDeviceAddress;
 	}
 
 	auto res = MakeResource<BufferResource>(this, info.name);
@@ -1096,7 +919,7 @@ auto DeviceResource::CreateBuffer(BufferInfo const& info) -> Buffer {
 	VkBufferCreateInfo bufferInfo{
 		.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
 		.size = size,
-		.usage = CAST(VkBufferUsageFlags, usage),
+		.usage = VkBufferUsageFlags(usage),
 		.sharingMode = VK_SHARING_MODE_EXCLUSIVE,
 	};
 
@@ -1110,14 +933,16 @@ auto DeviceResource::CreateBuffer(BufferInfo const& info) -> Buffer {
 		.usage = VMA_MEMORY_USAGE_AUTO,
 	};
 
+	// vk::Buffer b;
+	// // VB_VK_RESULT result = vmaCreateBuffer(vmaAllocator, &bufferInfo, &allocInfo, &res->handle, &res->allocation, nullptr);
 	VB_VK_RESULT result = vmaCreateBuffer(vmaAllocator, &bufferInfo, &allocInfo, &res->handle, &res->allocation, nullptr);
 	VB_CHECK_VK_RESULT(owner->init_info.checkVkResult, result, "Failed to create buffer!");
 	VB_LOG_TRACE("[ vmaCreateBuffer ] name = %s, size = %zu", info.name.data(), bufferInfo.size);
 
 	// Update bindless descriptor
-	if (usage & BufferUsage::Storage) {
+	if (usage & BufferUsage::eStorageBuffer) {
 		VB_ASSERT(descriptor.resource != nullptr, "Descriptor resource not set!");
-		res->rid = descriptor.resource->PopID(DescriptorType::StorageBuffer);
+		res->rid = descriptor.resource->PopID(DescriptorType::eStorageBuffer);
 
 		VkDescriptorBufferInfo bufferInfo = {
 			.buffer = res->handle,
@@ -1128,7 +953,7 @@ auto DeviceResource::CreateBuffer(BufferInfo const& info) -> Buffer {
 		VkWriteDescriptorSet write = {
 			.sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
 			.dstSet          = descriptor.resource->set,
-			.dstBinding      = descriptor.resource->GetBinding(DescriptorType::StorageBuffer),
+			.dstBinding      = descriptor.resource->GetBinding(DescriptorType::eStorageBuffer),
 			.dstArrayElement = buffer.GetResourceID(),
 			.descriptorCount = 1,
 			.descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
@@ -1148,14 +973,14 @@ auto DeviceResource::CreateImage(ImageInfo const& info) -> Image {
 	res->extent  = info.extent;
 	res->usage   = info.usage;
 	res->format  = info.format;
-	res->layout  = ImageLayout::Undefined;
+	res->layout  = ImageLayout::eUndefined;
 	res->layers  = info.layers;
 
 	VkImageCreateInfo imageInfo{
 		.sType         = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
 		.flags         = (VkImageCreateFlags)(info.layers == 6? VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT: 0),
 		.imageType     = VK_IMAGE_TYPE_2D,
-		.format        = CAST(VkFormat,info.format),
+		.format        = VkFormat(info.format),
 		.extent = {
 			.width     = info.extent.width,
 			.height    = info.extent.height,
@@ -1172,7 +997,7 @@ auto DeviceResource::CreateImage(ImageInfo const& info) -> Image {
 
 	VmaAllocationCreateInfo allocInfo = {
 		.usage = VMA_MEMORY_USAGE_AUTO,
-		.preferredFlags = (VkMemoryPropertyFlags)(info.usage & ImageUsage::TransientAttachment
+		.preferredFlags = (VkMemoryPropertyFlags)(info.usage & vk::ImageUsageFlagBits::eTransientAttachment
 			? VK_MEMORY_PROPERTY_LAZILY_ALLOCATED_BIT
 			: 0),
 	};
@@ -1183,18 +1008,18 @@ auto DeviceResource::CreateImage(ImageInfo const& info) -> Image {
 		info.layers);
 	
 
-	AspectFlags aspect{};
+	vk::ImageAspectFlags aspect{};
 	switch (info.format) {
-		case Format::D24UnormS8Uint:
-			aspect = Aspect::Stencil; // Invalid, cannot be both stencil and depth, todo: create separate imageview
+		case vk::Format::eD24UnormS8Uint:
+			aspect = Aspect::eStencil; // Invalid, cannot be both stencil and depth, todo: create separate imageview
 		[[fallthrough]];
-		case Format::D32Sfloat:
-		case Format::D16Unorm:
-			aspect |= Aspect::Depth;
+		case vk::Format::eD32Sfloat:
+		case vk::Format::eD16Unorm:
+			aspect |= Aspect::eDepth;
 			break;
 		[[likely]]
 		default:
-			aspect = Aspect::Color;
+			aspect = Aspect::eColor;
 			break;
 	}
 	res->aspect = aspect;
@@ -1205,7 +1030,7 @@ auto DeviceResource::CreateImage(ImageInfo const& info) -> Image {
 		.viewType = info.layers == 1? VK_IMAGE_VIEW_TYPE_2D: VK_IMAGE_VIEW_TYPE_CUBE,
 		.format   = (VkFormat)info.format,
 		.subresourceRange {
-			.aspectMask     = (VkImageAspectFlags)aspect,
+			.aspectMask     = VkImageAspectFlags(aspect),
 			.baseMipLevel   = 0,
 			.levelCount     = 1,
 			.baseArrayLayer = 0,
@@ -1227,21 +1052,25 @@ auto DeviceResource::CreateImage(ImageInfo const& info) -> Image {
 			VB_CHECK_VK_RESULT(owner->init_info.checkVkResult, result, "Failed to create image view!");
 		}
 	}
-	if (info.usage & ImageUsage::Sampled) {
+	if (info.usage & vk::ImageUsageFlagBits::eSampled) {
 		VB_ASSERT(descriptor.resource != nullptr, "Descriptor resource not set!");
-		res->rid = descriptor.resource->PopID(DescriptorType::CombinedImageSampler);
+		res->rid = descriptor.resource->PopID(DescriptorType::eCombinedImageSampler);
 	}
-	if (info.usage & ImageUsage::Storage) {
+	if (info.usage & vk::ImageUsageFlagBits::eStorage) {
 		VB_ASSERT(descriptor.resource != nullptr, "Descriptor resource not set!");
-		res->rid = descriptor.resource->PopID(DescriptorType::StorageImage);
+		res->rid = descriptor.resource->PopID(DescriptorType::eStorageImage);
 	}
-	if (info.usage & ImageUsage::Sampled) {
-		ImageLayout newLayout = ImageLayout::ShaderRead;
-		switch (aspect) {
-		case Aspect::Depth:                   newLayout = ImageLayout::DepthReadOnly;    break;
-		case Aspect::Depth | Aspect::Stencil: newLayout = ImageLayout::DepthStencilRead; break;
-		[[likely]]
-		default: break;
+	if (info.usage & vk::ImageUsageFlagBits::eSampled) {
+		ImageLayout newLayout = ImageLayout::eShaderReadOnlyOptimal;
+
+		vk::ImageAspectFlags ds = Aspect::eDepth | Aspect::eStencil;
+		
+		if ((aspect & Aspect::eDepth) == Aspect::eDepth) [[unlikely]] {
+			newLayout = ImageLayout::eDepthReadOnlyOptimal;
+		}
+		
+		if ((aspect & ds) == ds) [[unlikely]] {
+			newLayout = ImageLayout::eDepthStencilReadOnlyOptimal;
 		}
 
 		// res->imguiRIDs.resize(desc.layers);
@@ -1262,7 +1091,7 @@ auto DeviceResource::CreateImage(ImageInfo const& info) -> Image {
 		VkWriteDescriptorSet write = {
 			.sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
 			.dstSet          = descriptor.resource->set,
-			.dstBinding      = descriptor.resource->GetBinding(DescriptorType::CombinedImageSampler),
+			.dstBinding      = descriptor.resource->GetBinding(DescriptorType::eCombinedImageSampler),
 			.dstArrayElement = image.GetResourceID(),
 			.descriptorCount = 1,
 			.descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
@@ -1271,7 +1100,7 @@ auto DeviceResource::CreateImage(ImageInfo const& info) -> Image {
 
 		vkUpdateDescriptorSets(handle, 1, &write, 0, nullptr);
 	}
-	if (info.usage & ImageUsage::Storage) {
+	if (info.usage & vk::ImageUsageFlagBits::eStorage) {
 		VkDescriptorImageInfo descriptorInfo = {
 			.sampler     = GetOrCreateSampler(info.sampler), // todo: remove
 			.imageView   = res->view,
@@ -1280,7 +1109,7 @@ auto DeviceResource::CreateImage(ImageInfo const& info) -> Image {
 		VkWriteDescriptorSet write = {
 			.sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
 			.dstSet          = descriptor.resource->set,
-			.dstBinding      = descriptor.resource->GetBinding(DescriptorType::StorageImage),
+			.dstBinding      = descriptor.resource->GetBinding(DescriptorType::eStorageImage),
 			.dstArrayElement = image.GetResourceID(),
 			.descriptorCount = 1,
 			.descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
@@ -1403,9 +1232,9 @@ void PipelineResource::CreatePipelineLayout(std::span<VkDescriptorSetLayout cons
 }
 
 auto Device::CreatePipeline(PipelineInfo const& info) -> Pipeline {
-	VB_ASSERT(info.point != PipelinePoint::MaxEnum, "Pipeline point should be set!");
+	// VB_ASSERT(info.point != PipelinePoint::eMaxEnum, "Pipeline point should be set!");
 	VB_ASSERT(info.stages.size() > 0, "Pipeline should have at least one stage!");
-	if (info.point == PipelinePoint::Graphics &&
+	if (info.point == PipelinePoint::eGraphics &&
 			resource->init_info.pipeline_library &&
 				resource->physicalDevice->graphicsPipelineLibraryFeatures.graphicsPipelineLibrary) {
 		return resource->pipelineLibrary.CreatePipeline(info);
@@ -1439,7 +1268,7 @@ auto DeviceResource::CreatePipeline(PipelineInfo const& info) -> Pipeline {
 		++i;
 	}
 
-	if (info.point == PipelinePoint::Compute) {
+	if (info.point == PipelinePoint::eCompute) {
 		VB_ASSERT(shader_stages.size() == 1, "Compute pipeline supports only 1 stage.");
 		VkComputePipelineCreateInfo pipelineInfo {
 			.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
@@ -1502,9 +1331,9 @@ auto DeviceResource::CreatePipeline(PipelineInfo const& info) -> Pipeline {
 				.offset = attributeSize
 			};
 			switch (format) {
-			case Format::RG32Sfloat:   attributeSize += 2 * sizeof(float); break;
-			case Format::RGB32Sfloat:  attributeSize += 3 * sizeof(float); break;
-			case Format::RGBA32Sfloat: attributeSize += 4 * sizeof(float); break;
+			case vk::Format::eR32G32Sfloat:       attributeSize += 2 * sizeof(float); break;
+			case vk::Format::eR32G32B32Sfloat:    attributeSize += 3 * sizeof(float); break;
+			case vk::Format::eR32G32B32A32Sfloat: attributeSize += 4 * sizeof(float); break;
 			default: VB_ASSERT(false, "Invalid Vertex Attribute"); break;
 			}
 			i++; // So we move it here
@@ -1551,7 +1380,7 @@ auto DeviceResource::CreatePipeline(PipelineInfo const& info) -> Pipeline {
 			.viewMask                = 0,
 			.colorAttachmentCount    = static_cast<u32>(info.color_formats.size()),
 			.pColorAttachmentFormats = reinterpret_cast<const VkFormat*>(info.color_formats.data()),
-			.depthAttachmentFormat   = info.use_depth ? CAST(VkFormat, info.depth_format) : VK_FORMAT_UNDEFINED,
+			.depthAttachmentFormat   = info.use_depth ? VkFormat(info.depth_format) : VK_FORMAT_UNDEFINED,
 			.stencilAttachmentFormat = VK_FORMAT_UNDEFINED,
 		};
 
@@ -1630,15 +1459,15 @@ auto DeviceResource::PipelineLibrary::CreatePipeline(PipelineInfo const& info) -
 	u32 fragmentShaderStagesCount = 0;
 	for (auto& stage: info.stages) {
 		switch(stage.stage) {
-			case ShaderStage::Vertex:
-			case ShaderStage::TessellationControl:
-			case ShaderStage::TessellationEvaluation:
-			case ShaderStage::Geometry:
-			case ShaderStage::Task:
-			case ShaderStage::Mesh:
+			case ShaderStage::eVertex:
+			case ShaderStage::eTessellationControl:
+			case ShaderStage::eTessellationEvaluation:
+			case ShaderStage::eGeometry:
+			case ShaderStage::eTaskEXT:
+			case ShaderStage::eMeshEXT:
 				preRasterizationStages[preRasterizationStagesCount++] = stage;
 				break;
-			case ShaderStage::Fragment:
+			case ShaderStage::eFragment:
 				fragmentShaderStages[fragmentShaderStagesCount++] = stage;
 				break;
 			default:
@@ -1698,13 +1527,13 @@ void DeviceResource::PipelineLibrary::CreateVertexInputInterface(VertexInputInfo
 		attributeDescs[i] = VkVertexInputAttributeDescription{
 			.location = i,
 			.binding = 0,
-			.format = CAST(VkFormat, format),
+			.format = VkFormat(format),
 			.offset = attributeSize
 		};
 		switch (format) {
-		case Format::RG32Sfloat:   attributeSize += 2 * sizeof(float); break;
-		case Format::RGB32Sfloat:  attributeSize += 3 * sizeof(float); break;
-		case Format::RGBA32Sfloat: attributeSize += 4 * sizeof(float); break;
+		case vk::Format::eR32G32Sfloat:       attributeSize += 2 * sizeof(float); break;
+		case vk::Format::eR32G32B32Sfloat:    attributeSize += 3 * sizeof(float); break;
+		case vk::Format::eR32G32B32A32Sfloat: attributeSize += 4 * sizeof(float); break;
 		default: VB_ASSERT(false, "Invalid Vertex Attribute"); break;
 		}
 		++i;
@@ -2041,15 +1870,15 @@ void Command::BeginRendering(RenderingInfo const& info) {
 		colorAttachInfos[i] = {
 			.sType       = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR,
 			.imageView   = colorAttach.colorImage.resource->view,
-			.imageLayout = CAST(VkImageLayout,       colorAttach.colorImage.resource->layout),
-			.loadOp      = CAST(VkAttachmentLoadOp,  colorAttach.loadOp),
-			.storeOp     = CAST(VkAttachmentStoreOp, colorAttach.storeOp),
-			.clearValue  = {CAST(VkClearColorValue,  colorAttach.clearValue)},
+			.imageLayout = VkImageLayout(colorAttach.colorImage.resource->layout),
+			.loadOp      = VkAttachmentLoadOp(colorAttach.loadOp),
+			.storeOp     = VkAttachmentStoreOp(colorAttach.storeOp),
+			.clearValue  = *reinterpret_cast<VkClearValue const*>(&colorAttach.clearValue),
 		};
 		if (colorAttach.resolveImage.resource) {
 			colorAttachInfos[i].resolveMode        = VK_RESOLVE_MODE_AVERAGE_BIT;
 			colorAttachInfos[i].resolveImageView   = colorAttach.resolveImage.resource->view;
-			colorAttachInfos[i].resolveImageLayout = CAST(VkImageLayout, colorAttach.resolveImage.resource->layout);
+			colorAttachInfos[i].resolveImageLayout = VkImageLayout(colorAttach.resolveImage.resource->layout);
 		}
 		++i;
 	}
@@ -2074,10 +1903,10 @@ void Command::BeginRendering(RenderingInfo const& info) {
 		depthAttachInfo = {
 			.sType       = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR,
 			.imageView   = info.depth.image.resource->view,
-			.imageLayout = CAST(VkImageLayout, info.depth.image.resource->layout),
-			.loadOp      = CAST(VkAttachmentLoadOp, info.depth.loadOp),
-			.storeOp     = CAST(VkAttachmentStoreOp, info.depth.storeOp),
-			// .storeOp = info.depth.image.resource->usage & ImageUsage::TransientAttachment 
+			.imageLayout = VkImageLayout(info.depth.image.resource->layout),
+			.loadOp      = VkAttachmentLoadOp(info.depth.loadOp),
+			.storeOp     = VkAttachmentStoreOp(info.depth.storeOp),
+			// .storeOp = info.depth.image.resource->usage & vk::ImageUsageFlagBits::eTransientAttachment 
 			//	? VK_ATTACHMENT_STORE_OP_DONT_CARE
 			//	: VK_ATTACHMENT_STORE_OP_STORE,
 			.clearValue {
@@ -2091,9 +1920,9 @@ void Command::BeginRendering(RenderingInfo const& info) {
 		stencilAttachInfo = {
 			.sType       = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR,
 			.imageView   = info.stencil.image.resource->view,
-			.imageLayout = CAST(VkImageLayout, info.stencil.image.resource->layout),
-			.loadOp      = CAST(VkAttachmentLoadOp, info.stencil.loadOp),
-			.storeOp     = CAST(VkAttachmentStoreOp, info.stencil.storeOp),
+			.imageLayout = VkImageLayout(info.stencil.image.resource->layout),
+			.loadOp      = VkAttachmentLoadOp(info.stencil.loadOp),
+			.storeOp     = VkAttachmentStoreOp(info.stencil.storeOp),
 			.clearValue {
 				.depthStencil = { info.stencil.clearValue.depth, info.stencil.clearValue.stencil }
 			}
@@ -2721,7 +2550,7 @@ void DeviceResource::Create(DeviceInfo const& info) {
 			// Queue choosing heuristics
 			std::span<PhysicalDeviceResource::QueueFamilyIndexRequest::AvoidInfo const> avoid_if_possible{};
 			if(queue_info.separate_family) {
-				switch (queue_info.flags) {
+				switch (QueueFlags::MaskType(queue_info.flags)) {
 				case VK_QUEUE_COMPUTE_BIT: 
 					avoid_if_possible = {{{VK_QUEUE_GRAPHICS_BIT, 1.0f}, {VK_QUEUE_TRANSFER_BIT, 0.5f}}};
 					break;
@@ -2736,7 +2565,7 @@ void DeviceResource::Create(DeviceInfo const& info) {
 
 			// Get family index fitting requirements
 			PhysicalDeviceResource::QueueFamilyIndexRequest request{
-				.desiredFlags = queue_info.flags,
+				.desiredFlags = VkQueueFlags(queue_info.flags),
 				.undesiredFlags = 0,
 				.avoidIfPossible = avoid_if_possible,			
 				.numTakenQueues = numQueuesToCreate
@@ -2750,13 +2579,13 @@ void DeviceResource::Create(DeviceInfo const& info) {
 
 			auto familyIndex = physicalDevice.GetQueueFamilyIndex(request);
 			if (familyIndex == PhysicalDeviceResource::QUEUE_NOT_FOUND) {
-				VB_LOG_WARN("Requested queue flags %u not available on device: %s",
-					queue_info.flags, physicalDevice.physicalProperties2.properties.deviceName);
+				VB_LOG_WARN("Requested queue flags %d not available on device: %s",
+					QueueFlags::MaskType(queue_info.flags), physicalDevice.physicalProperties2.properties.deviceName);
 				deviceSuitable = false;
 				break;
 			} else if (familyIndex == PhysicalDeviceResource::ALL_SUITABLE_QUEUES_TAKEN) {
-				VB_LOG_WARN("Requested more queues with flags %u than available on device: %s. Queue was not created",
-					queue_info.flags, physicalDevice.physicalProperties2.properties.deviceName);
+				VB_LOG_WARN("Requested more queues with flags %d than available on device: %s. Queue was not created",
+					QueueFlags::MaskType(queue_info.flags), physicalDevice.physicalProperties2.properties.deviceName);
 				continue;
 			}
 			// Create queue
@@ -2998,7 +2827,7 @@ void DeviceResource::Create(DeviceInfo const& info) {
 	// Create staging buffer
 	staging = CreateBuffer({
 		init_info.staging_buffer_size,
-		BufferUsage::TransferSrc,
+		BufferUsage::eTransferSrc,
 		Memory::CPU,
 		"Staging Buffer"
 	});
@@ -3027,7 +2856,7 @@ void SwapChainResource::ChoosePresentMode() {
 	}
 	VB_LOG_WARN("Preferred present mode not available!");
 	// FIFO is guaranteed to be available
-	init_info.present_mode = PresentMode::Fifo;
+	init_info.present_mode = PresentMode::eFifo;
 }
 
 void SwapChainResource::ChooseExtent() {
@@ -3088,13 +2917,13 @@ void SwapChainResource::CreateSurfaceFormats() {
 
 void SwapChainResource::ChooseSurfaceFormat() {
 	for (auto const& availableFormat : available_surface_formats) {
-		if (availableFormat.format == CAST(VkFormat, init_info.color_format) &&
+		if (availableFormat.format == VkFormat(init_info.color_format) &&
 			availableFormat.colorSpace == static_cast<VkColorSpaceKHR>(init_info.color_space)) {
 			return;
 		}
 	}
 	VB_LOG_WARN("Preferred surface format not available!");
-	init_info.color_format = static_cast<Format>(available_surface_formats[0].format);
+	init_info.color_format = static_cast<vk::Format>(available_surface_formats[0].format);
 	init_info.color_space = static_cast<ColorSpace>(available_surface_formats[0].colorSpace);
 }
 
@@ -3120,7 +2949,7 @@ void SwapChainResource::CreateSwapchain() {
 		.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
 		.surface = surface,
 		.minImageCount = image_count,
-		.imageFormat = CAST(VkFormat, init_info.color_format),
+		.imageFormat = VkFormat(init_info.color_format),
 		.imageColorSpace = static_cast<VkColorSpaceKHR>(init_info.color_space),
 		.imageExtent = {init_info.extent.width, init_info.extent.height},
 		.imageArrayLayers = 1,
@@ -3157,14 +2986,14 @@ void SwapChainResource::CreateImages() {
 		image.resource->fromSwapchain = true;
 		image.resource->handle  = vk_image;
 		image.resource->extent = {init_info.extent.width, init_info.extent.height, 1};
-		image.resource->layout = ImageLayout::Undefined;
-		image.resource->aspect = Aspect::Color;
+		image.resource->layout = ImageLayout::eUndefined;
+		image.resource->aspect = Aspect::eColor;
 
 		VkImageViewCreateInfo viewInfo{
 			.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
 			.image = vk_image,
 			.viewType = VK_IMAGE_VIEW_TYPE_2D,
-			.format = CAST(VkFormat, init_info.color_format),
+			.format = VkFormat(init_info.color_format),
 			.subresourceRange {
 				.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
 				.baseMipLevel = 0,
@@ -3576,7 +3405,7 @@ bool Command::Copy(Image const& dst, void const* data, u32 size) {
 }
 
 void Command::Copy(Image const& dst, Buffer const& src, u32 srcOffset) {
-	VB_ASSERT(!(dst.resource->aspect & Aspect::Depth || dst.resource->aspect & Aspect::Stencil),
+	VB_ASSERT(!(dst.resource->aspect & Aspect::eDepth || dst.resource->aspect & Aspect::eStencil),
 		"CmdCopy doesnt't support depth/stencil images");
 	VkBufferImageCopy2 region{
 		.sType = VK_STRUCTURE_TYPE_BUFFER_IMAGE_COPY_2,
@@ -3607,7 +3436,7 @@ void Command::Copy(Image const& dst, Buffer const& src, u32 srcOffset) {
 }
 
 void Command::Copy(Buffer const& dst, Image const& src, u32 dstOffset, Offset3D imageOffset, Extent3D imageExtent) {
-	VB_ASSERT(!(src.resource->aspect & Aspect::Depth || src.resource->aspect & Aspect::Stencil),
+	VB_ASSERT(!(src.resource->aspect & Aspect::eDepth || src.resource->aspect & Aspect::eStencil),
 		"CmdCopy doesn't support depth/stencil images");
 	VkBufferImageCopy2 region{
 		.sType = VK_STRUCTURE_TYPE_BUFFER_IMAGE_COPY_2,
@@ -3651,10 +3480,10 @@ void Command::Barrier(Image const& img, ImageBarrier const& barrier) {
 		.srcAccessMask       = (VkAccessFlags2)         barrier.memoryBarrier.srcAccessMask,
 		.dstStageMask        = (VkPipelineStageFlags2)  barrier.memoryBarrier.dstStageMask,
 		.dstAccessMask       = (VkAccessFlags2)         barrier.memoryBarrier.dstAccessMask,
-		.oldLayout           = (VkImageLayout)(barrier.oldLayout == ImageLayout::MaxEnum
+		.oldLayout           = (VkImageLayout)(barrier.oldLayout == ImageLayout::eUndefined
 									? img.resource->layout
 									: barrier.oldLayout),
-		.newLayout           = (VkImageLayout)(barrier.newLayout == ImageLayout::MaxEnum
+		.newLayout           = (VkImageLayout)(barrier.newLayout == ImageLayout::eUndefined
 									? img.resource->layout
 									: barrier.newLayout),
 		.srcQueueFamilyIndex = barrier.srcQueueFamilyIndex,
@@ -3766,14 +3595,14 @@ void Command::Blit(BlitInfo const& info) {
 				.baseArrayLayer = 0,
 				.layerCount     = 1,
 			},
-			.srcOffsets = {CAST(VkOffset3D, region.src.offset), CAST(VkOffset3D, region.src.extent)},
+			.srcOffsets = {VkOffset3D(region.src.offset), VkOffset3D(region.src.extent)},
 			.dstSubresource{
 				.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT,
 				.mipLevel       = 0,
 				.baseArrayLayer = 0,
 				.layerCount     = 1,
 			},
-			.dstOffsets = {CAST(VkOffset3D, region.dst.offset), CAST(VkOffset3D, region.dst.extent)},
+			.dstOffsets = {VkOffset3D(region.dst.offset), VkOffset3D(region.dst.extent)},
 		};
 		++i;
 	}
@@ -3787,7 +3616,7 @@ void Command::Blit(BlitInfo const& info) {
 		.dstImageLayout = (VkImageLayout)dst.resource->layout,
 		.regionCount    = static_cast<u32>(blitRegions.size()),
 		.pRegions       = blitRegions.data(),
-		.filter         = CAST(VkFilter, info.filter),
+		.filter         = VkFilter(info.filter),
 	};
 
 	vkCmdBlitImage2(resource->handle, &blitInfo);
@@ -3798,12 +3627,12 @@ auto DeviceResource::CreateSampler(SamplerInfo const& info) -> VkSampler {
 		.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
 		.pNext  = nullptr,
 		.flags  = 0,
-		.magFilter = CAST(VkFilter, info.magFilter),
-		.minFilter = CAST(VkFilter, info.minFilter),
-		.mipmapMode = CAST(VkSamplerMipmapMode, info.mipmapMode),
-		.addressModeU = CAST(VkSamplerAddressMode, info.wrapU),
-		.addressModeV = CAST(VkSamplerAddressMode, info.wrapV),
-		.addressModeW = CAST(VkSamplerAddressMode, info.wrapW),
+		.magFilter = VkFilter(info.magFilter),
+		.minFilter = VkFilter(info.minFilter),
+		.mipmapMode = VkSamplerMipmapMode(info.mipmapMode),
+		.addressModeU = VkSamplerAddressMode(info.wrapU),
+		.addressModeV = VkSamplerAddressMode(info.wrapV),
+		.addressModeW = VkSamplerAddressMode(info.wrapW),
 		.mipLodBias = 0.0f,
 
 		.anisotropyEnable = info.anisotropyEnable == false

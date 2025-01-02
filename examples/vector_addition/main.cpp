@@ -22,12 +22,12 @@ int main(){
 	
 	// Create device with 1 compute queue and staging buffer for 2 vectors
 	vb::Device device = instance.CreateDevice({
-		.queues = {{{vb::QueueFlagBits::Compute}}},
+		.queues = {{{vb::QueueFlagBits::eCompute}}},
 		.staging_buffer_size = vector_size * sizeof(int) * 2,
 	});
 
 	// Get compute queue handle object
-	vb::Queue queue = device.GetQueue({vb::QueueFlagBits::Compute});
+	vb::Queue queue = device.GetQueue({vb::QueueFlagBits::eCompute});
 	
 	// Create 2 vectors:
 	// vector_a = {0, 1, 2, ..., vector_size - 1}
@@ -40,13 +40,13 @@ int main(){
 	// Create device buffers
 	vb::BufferInfo buffer_info = {
 		.size = vector_size * sizeof(int),
-		.usage = vb::BufferUsage::Storage | vb::BufferUsage::TransferDst,
+		.usage = vb::BufferUsage::eStorageBuffer | vb::BufferUsage::eTransferDst,
 		.memory = vb::Memory::GPU,
 	};
 
 	// Create bindless descriptor resources with 1 binding
 	vb::Descriptor descriptor = device.CreateDescriptor({{
-		{vb::DescriptorType::StorageBuffer, binding_buffer},
+		{vb::DescriptorType::eStorageBuffer, binding_buffer},
 	}});
 
 	// Use our descriptor for next commands.
@@ -59,14 +59,14 @@ int main(){
 	vb::Buffer device_buffer_b = device.CreateBuffer(buffer_info);
 
 	// Create Buffer for result of vector addition
-	buffer_info.usage = vb::BufferUsage::Storage | vb::BufferUsage::TransferSrc;
+	buffer_info.usage = vb::BufferUsage::eStorageBuffer | vb::BufferUsage::eTransferSrc;
 	vb::Buffer device_buffer_result = device.CreateBuffer(buffer_info);
 
 	// Create Buffer for transfering result to CPU,
 	// we could also use staging for this
 	vb::Buffer cpu_buffer_result = device.CreateBuffer({
 		.size = vector_size * sizeof(int),
-		.usage = vb::BufferUsage::TransferDst,
+		.usage = vb::BufferUsage::eTransferDst,
 		.memory = vb::Memory::CPU,
 	});
 
@@ -78,9 +78,9 @@ int main(){
 
 	// Create compute pipeline
 	vb::Pipeline pipeline = device.CreatePipeline({
-		.point = vb::PipelinePoint::Compute,
+		.point = vb::PipelinePoint::eCompute,
 		.stages = {{{
-			.stage = vb::ShaderStage::Compute, 
+			.stage = vb::ShaderStage::eCompute, 
 			.source = {"vector_addition.comp"},
 			.compile_options = compile_options
 		}}},

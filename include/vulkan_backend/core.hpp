@@ -1,10 +1,6 @@
 #ifndef VULKAN_BACKEND_CORE_HPP_
 #define VULKAN_BACKEND_CORE_HPP_
 
-#include <vulkan_backend/config.hpp>
-#include <vulkan_backend/enums.hpp>
-#include <vulkan_backend/structs.hpp>
-
 #if !defined(VB_USE_STD_MODULE) || !VB_USE_STD_MODULE
 #include <memory>
 #include <cstdint>
@@ -13,6 +9,15 @@
 #elif !defined(_VB_INCLUDE_IN_MODULE)
 import std;
 #endif
+
+#if !defined(VB_USE_VULKAN_MODULE) || !VB_USE_VULKAN_MODULE
+#include <vulkan/vulkan.hpp>
+#elif !defined(_VB_INCLUDE_IN_MODULE)
+import vulkan_hpp;
+#endif
+
+#include <vulkan_backend/config.hpp>
+#include <vulkan_backend/structs.hpp>
 
 #ifdef MemoryBarrier
 #undef MemoryBarrier
@@ -24,7 +29,30 @@ using i32 = std::int32_t;
 using u8  = std::uint8_t;
 using u32 = std::uint32_t;
 using u64 = std::uint64_t;
-using DeviceAddress = u64;
+
+using vk::DeviceAddress;
+using vk::Format;
+
+using vk::BufferUsageFlags;
+using vk::ImageUsageFlags;
+using vk::QueueFlags;
+using vk::CullModeFlags;
+using vk::ResolveModeFlags;
+
+using BufferUsage    = vk::BufferUsageFlagBits;
+using Aspect         = vk::ImageAspectFlagBits;
+using ShaderStage    = vk::ShaderStageFlagBits;
+using ResolveMode    = vk::ResolveModeFlagBits;
+using PresentMode    = vk::PresentModeKHR;
+using LoadOp         = vk::AttachmentLoadOp;
+using StoreOp        = vk::AttachmentStoreOp;
+using ColorSpace     = vk::ColorSpaceKHR;
+using DynamicState   = vk::DynamicState;
+using CullMode       = vk::CullModeFlagBits;
+using DescriptorType = vk::DescriptorType;
+using QueueFlagBits  = vk::QueueFlagBits;
+using PipelinePoint  = vk::PipelineBindPoint;
+
 
 struct PhysicalDeviceResource;
 struct InstanceResource;
@@ -67,6 +95,14 @@ enum class LogLevel {
 	None,
 };
 
+enum class Memory {
+	GPU = vk::MemoryPropertyFlags::MaskType(vk::MemoryPropertyFlagBits::eDeviceLocal),
+	CPU = vk::MemoryPropertyFlags::MaskType(vk::MemoryPropertyFlagBits::eHostVisible)
+		| vk::MemoryPropertyFlags::MaskType(vk::MemoryPropertyFlagBits::eHostCoherent),
+};
+
+using MemoryFlags = vk::Flags<Memory>;
+
 struct BufferInfo {
 	u64              size;
 	BufferUsageFlags usage;
@@ -103,7 +139,7 @@ struct ImageInfo {
 	Extent3D          extent;
 	Format            format;
 	ImageUsageFlags   usage;
-	SampleCount       samples = SampleCount::_1;
+	SampleCount       samples = SampleCount::e1;
 	SamplerInfo       sampler = {};
 	u32               layers  = 1;
 	std::string_view  name    = "";
@@ -129,7 +165,7 @@ public:
 };
 
 struct QueueInfo {
-	QueueFlags flags = QueueFlagBits::Graphics;
+	QueueFlags flags = QueueFlagBits::eGraphics;
 	bool  separate_family = false;   // Prefer separate family
 	void* present_window = nullptr;  // Platform window
 };
@@ -181,27 +217,27 @@ private:
 
 struct PipelineInfo {
 	// Necessary for any pipeline creation
-	PipelinePoint                    point             = PipelinePoint::MaxEnum;
-	std::span<Pipeline::Stage const> stages            = {};
+	PipelinePoint                    point;
+	std::span<Pipeline::Stage const> stages;
 	
 	// Data for graphics pipeline
 	std::span<Format const>          vertexAttributes  = {};
 	std::span<Format const>          color_formats     = {};
 	bool                             use_depth         = false;
-	Format                           depth_format      = Format::Undefined;
-	SampleCount                      samples           = SampleCount::_1;
-	CullModeFlags                    cullMode          = CullMode::None;
+	Format                       depth_format          = Format::eUndefined;
+	SampleCount                      samples           = SampleCount::e1;
+	CullModeFlags                    cullMode          = CullMode::eNone;
 	bool                             line_topology     = false;
-	std::span<DynamicState const>    dynamicStates     = {{DynamicState::ViewPort, DynamicState::Scissor}};
+	std::span<DynamicState const>    dynamicStates     = {{DynamicState::eViewport, DynamicState::eScissor}};
 	std::string_view                 name              = "";
 };
 
 
 struct SubmitInfo {
 	Semaphore*         waitSemaphore   = nullptr;
-	PipelineStageFlags waitStages      = PipelineStage::None;
+	PipelineStageFlags waitStages      = PipelineStage::eNone;
 	Semaphore*         signalSemaphore = nullptr;
-	PipelineStageFlags signalStages    = PipelineStage::None;
+	PipelineStageFlags signalStages    = PipelineStage::eNone;
 	u64                waitValue       = 0;
 	u64                signalValue     = 0;
 };
@@ -210,15 +246,15 @@ struct RenderingInfo {
 	struct ColorAttachment {
 		Image const&    colorImage;
 		Image const&    resolveImage = {};
-		LoadOp          loadOp       = LoadOp::Clear;
-		StoreOp         storeOp      = StoreOp::Store;
-		ClearColorValue clearValue   = {{0.0f, 0.0f, 0.0f, 0.0f}};
+		LoadOp          loadOp       = LoadOp::eClear;
+		StoreOp         storeOp      = StoreOp::eStore;
+		ClearColorValue clearValue   = {{{0.0f, 0.0f, 0.0f, 0.0f}}};
 	};
 
 	struct DepthStencilAttachment {
 		Image const&           image;
-		LoadOp                 loadOp     = LoadOp::Clear;
-		StoreOp                storeOp    = StoreOp::Store;
+		LoadOp                 loadOp     = LoadOp::eClear;
+		StoreOp                storeOp    = StoreOp::eStore;
 		ClearDepthStencilValue clearValue = {1.0f, 0};
 	};
 
@@ -233,7 +269,7 @@ struct BlitInfo {
 	Image dst;
 	Image src;
 	std::span<ImageBlit const> regions = {};
-	Filter filter                      = Filter::Linear;
+	Filter filter                      = Filter::eLinear;
 };
 
 struct BarrierInfo {
@@ -290,9 +326,9 @@ struct SwapchainInfo {
 	u32         frames_in_flight  = kMaxFramesInFlight;
 	u32         additional_images = kAdditionalImages;
 	// Preferred color format, not guaranteed, get actual format after creation
-	Format      color_format      = Format::RGBA8Unorm;
-	ColorSpace  color_space       = ColorSpace::SrgbNonlinear;
-	PresentMode present_mode      = PresentMode::Mailbox;
+	Format  color_format      = Format::eR8G8B8A8Unorm;
+	ColorSpace  color_space       = ColorSpace::eSrgbNonlinear;
+	PresentMode present_mode      = PresentMode::eMailbox;
 };
 
 class Descriptor {
@@ -311,14 +347,14 @@ struct BindingInfo {
 	u32 static constexpr kBindingAuto = ~0u;
 	u32 static constexpr kMaxDescriptors = 8192;
 	// Type of descriptor (e.g., DescriptorType::Sampler)
-	DescriptorType type = DescriptorType::MaxEnum;
+	DescriptorType type;
 	// Binding number for this type.
 	// If not specified, will be assigned automatically
 	u32 binding = kBindingAuto;
 	// Max number of descriptors for this binding
 	u32 count = kMaxDescriptors;
 	// Shader stages that can access this resource
-	ShaderStage stage_flags = ShaderStage::All;
+	ShaderStage stage_flags = ShaderStage::eAll;
 	// Use update after bind flag
 	bool update_after_bind = false;
 	bool partially_bound   = true;
@@ -332,8 +368,8 @@ public:
 	auto CreateSwapchain(SwapchainInfo const& info)   -> Swapchain;
 	
 	auto CreateDescriptor(std::span<BindingInfo const> bindings = {{
-		{DescriptorType::SampledImage},
-		{DescriptorType::StorageBuffer},
+		{DescriptorType::eSampledImage},
+		{DescriptorType::eStorageBuffer},
 	}}) -> Descriptor;
 	void UseDescriptor(Descriptor const& descriptor);
 	auto GetBinding(DescriptorType const type) -> u32;
@@ -358,7 +394,7 @@ private:
 };
 
 struct DeviceInfo {
-	std::span<QueueInfo const> queues = {{{QueueFlagBits::Graphics}}};
+	std::span<QueueInfo const> queues = {{{QueueFlagBits::eGraphics}}};
 
 	u32 staging_buffer_size = kStagingSize;
 
@@ -368,6 +404,30 @@ struct DeviceInfo {
 		
 	// Features
 	bool unused_attachments     = false;
+};
+
+struct ImGuiInitInfo
+{
+    vk::Instance                      Instance;
+    vk::PhysicalDevice                PhysicalDevice;
+    vk::Device                        Device;
+    u32                               QueueFamily;
+    vk::Queue                         Queue;
+    vk::DescriptorPool                DescriptorPool;
+    vk::RenderPass                    RenderPass;
+    u32                               MinImageCount;
+    u32                               ImageCount;
+    vk::SampleCountFlagBits           MSAASamples;
+
+    vk::PipelineCache                 PipelineCache;
+    u32                               Subpass;
+
+    bool                               UseDynamicRendering;
+    vk::PipelineRenderingCreateInfoKHR PipelineRenderingCreateInfo;
+
+    const vk::AllocationCallbacks*    Allocator;
+    void                              (*CheckVkResultFn)(vk::Result err);
+    vk::DeviceSize                    MinAllocationSize;
 };
 
 #ifdef VB_GLFW

@@ -6,8 +6,16 @@ export module vulkan_backend;
 #define VB_USE_STD_MODULE 0
 #endif
 
+#ifndef VB_USE_VULKAN_MODULE
+#define VB_USE_VULKAN_MODULE 0
+#endif
+
 #if VB_USE_STD_MODULE
 import std;
+#endif
+
+#if VB_USE_VULKAN_MODULE
+import vulkan_hpp;
 #endif
 
 #define VB_EXPORT export
@@ -77,21 +85,21 @@ using VB_NAMESPACE::ImGuiShutdown;
 /* 
 	"enums.hpp"
 */
-using namespace Memory;
-using namespace BufferUsage;
-using namespace ImageUsage;
-using namespace Aspect;
-using namespace QueueFlagBits;
-using namespace CullMode;
-using namespace PipelineStage;
-using namespace Access;
-using namespace ResolveMode;
+using VB_NAMESPACE::Memory;
+using VB_NAMESPACE::BufferUsage;
+using VB_NAMESPACE::ImageUsageFlags;
+using VB_NAMESPACE::Aspect;
+using VB_NAMESPACE::QueueFlagBits;
+using VB_NAMESPACE::CullMode;
+using VB_NAMESPACE::PipelineStage;
+using VB_NAMESPACE::Access;
+using VB_NAMESPACE::ResolveMode;
 
 using VB_NAMESPACE::MemoryFlags;
 using VB_NAMESPACE::BufferUsageFlags;
 using VB_NAMESPACE::Format;
 using VB_NAMESPACE::ImageUsageFlags;
-using VB_NAMESPACE::AspectFlags;
+using VB_NAMESPACE::Aspect;
 using VB_NAMESPACE::QueueFlags;
 using VB_NAMESPACE::CullModeFlags;
 using VB_NAMESPACE::PipelineStageFlags;
