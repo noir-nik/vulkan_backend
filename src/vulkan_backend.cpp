@@ -25,25 +25,9 @@ import vulkan_hpp;
 #if !defined(VB_VMA_IMPLEMENTATION) || VB_VMA_IMPLEMENTATION
 #define VMA_IMPLEMENTATION
 #endif
-
 #include <vk_mem_alloc.h>
-
-#ifdef VB_IMGUI
-#include <imgui.h>
-#include <imgui_impl_vulkan.h>
-#include <imgui_impl_glfw.h>
-#endif
-
-#ifdef VB_GLFW
-#include <GLFW/glfw3.h>
-#endif
-
 #else
 import vk_mem_alloc;
-import imgui;
-import imgui_impl_glfw;
-import imgui_impl_vulkan;
-import glfw;
 #endif //_VB_EXT_MODULES
 
 #include <vulkan_backend/config.hpp>
@@ -615,9 +599,6 @@ struct ImageResource : ResourceBase<DeviceResource> {
 	bool fromSwapchain = false;
 	SampleCount samples = SampleCount::e1;
 	std::vector<VkImageView> layersView;
-#ifdef VB_IMGUI
-	std::vector<ImTextureID> imguiRIDs;
-#endif
 	Extent3D extent{};
 	vk::ImageUsageFlags usage;
 	vk::Format format;
@@ -638,10 +619,10 @@ struct ImageResource : ResourceBase<DeviceResource> {
 			vkDestroyImageView(owner->handle, view, owner->owner->allocator);
 			vmaDestroyImage(owner->vmaAllocator, handle, allocation);
 			if (rid != NullRID) {
-				if (usage & vk::ImageUsageFlagBits::eStorage) {
+				if (usage & ImageUsage::eStorage) {
 					owner->descriptor.resource->PushID(DescriptorType::eStorageImage, rid);
 				}
-				if (usage & vk::ImageUsageFlagBits::eSampled) {
+				if (usage & ImageUsage::eSampled) {
 					owner->descriptor.resource->PushID(DescriptorType::eCombinedImageSampler, rid);
 				}
 				// for (ImTextureID imguiRID : imguiRIDs) {
@@ -688,10 +669,8 @@ struct CommandResource : ResourceBase<DeviceResource> {
 	}
 };
 
-#ifdef VB_GLFW
 struct SwapChainResource: ResourceBase<DeviceResource> {
 	VkSwapchainKHR  handle  = VK_NULL_HANDLE;
-	VkSurfaceKHR    surface = VK_NULL_HANDLE;
 	VkSurfaceCapabilitiesKHR surface_capabilities;
 	std::vector<VkSemaphore> image_available_semaphores;
 	std::vector<VkSemaphore> render_finished_semaphores;
@@ -707,10 +686,7 @@ struct SwapChainResource: ResourceBase<DeviceResource> {
 
 	SwapchainInfo init_info;
 
-#ifdef VB_IMGUI
-	void CreateImGui(GLFWwindow* window, SampleCount sample_count);
-	void DestroyImGui();
-#endif
+	auto GetImGuiInfo() -> ImGuiInitInfo;
 
 	inline auto GetImageAvailableSemaphore(u32 current_frame) -> VkSemaphore {
 		return image_available_semaphores[current_frame];
@@ -723,7 +699,6 @@ struct SwapChainResource: ResourceBase<DeviceResource> {
 	void ChooseSurfaceFormat();
 	void ChoosePresentMode();
 	void ChooseExtent();
-	void CreateSurface();
 	void CreateSwapchain();
 	void CreateImages();
 	void CreateSemaphores();
@@ -735,7 +710,6 @@ struct SwapChainResource: ResourceBase<DeviceResource> {
 	using ResourceBase::ResourceBase;
 	void Free() override;
 };
-#endif // VB_GLFW
 
 auto Buffer::GetResourceID() const -> u32 {
 	VB_ASSERT(resource->rid != NullRID, "Invalid buffer rid");
@@ -800,6 +774,10 @@ auto Instance::CreateDevice(DeviceInfo const& info) -> Device {
 	return device;
 }
 
+auto Instance::GetHandle() const -> vk::Instance {
+	return resource->handle;
+}
+
 void Device::UseDescriptor(Descriptor const& descriptor) {
 	resource->descriptor = descriptor;
 }
@@ -851,14 +829,14 @@ auto Queue::HasSeparateFamily() const -> bool {
 }
 
 auto Queue::SupportsPresentTo(void const* window) const -> bool {
-	return resource->init_info.present_window == window;
+	return resource->init_info.supported_surface == window;
 }
 
 auto Device::GetQueue(QueueInfo const& info) -> Queue {
 	for (auto& q : resource->queuesResources) {
 		if ((q.init_info.flags & info.flags) == info.flags &&
-				(info.present_window != nullptr || 
-					q.init_info.present_window == info.present_window)) {
+				(bool(info.supported_surface) || 
+					q.init_info.supported_surface == info.supported_surface)) {
 			Queue queue;
 			queue.resource = &q;
 			return queue;
@@ -933,11 +911,9 @@ auto DeviceResource::CreateBuffer(BufferInfo const& info) -> Buffer {
 		.usage = VMA_MEMORY_USAGE_AUTO,
 	};
 
-	// vk::Buffer b;
-	// // VB_VK_RESULT result = vmaCreateBuffer(vmaAllocator, &bufferInfo, &allocInfo, &res->handle, &res->allocation, nullptr);
+	VB_LOG_TRACE("[ vmaCreateBuffer ] name = %s, size = %zu", info.name.data(), bufferInfo.size);
 	VB_VK_RESULT result = vmaCreateBuffer(vmaAllocator, &bufferInfo, &allocInfo, &res->handle, &res->allocation, nullptr);
 	VB_CHECK_VK_RESULT(owner->init_info.checkVkResult, result, "Failed to create buffer!");
-	VB_LOG_TRACE("[ vmaCreateBuffer ] name = %s, size = %zu", info.name.data(), bufferInfo.size);
 
 	// Update bindless descriptor
 	if (usage & BufferUsage::eStorageBuffer) {
@@ -997,17 +973,16 @@ auto DeviceResource::CreateImage(ImageInfo const& info) -> Image {
 
 	VmaAllocationCreateInfo allocInfo = {
 		.usage = VMA_MEMORY_USAGE_AUTO,
-		.preferredFlags = (VkMemoryPropertyFlags)(info.usage & vk::ImageUsageFlagBits::eTransientAttachment
+		.preferredFlags = VkMemoryPropertyFlags(info.usage & ImageUsage::eTransientAttachment
 			? VK_MEMORY_PROPERTY_LAZILY_ALLOCATED_BIT
 			: 0),
 	};
+
+	VB_LOG_TRACE("[ vmaCreateImage ] name = %s, extent = %ux%ux%u, layers = %u",
+		info.name.data(), info.extent.width, info.extent.height, info.extent.depth, info.layers);
 	VB_VK_RESULT result = vmaCreateImage(vmaAllocator, &imageInfo, &allocInfo, &res->handle, &res->allocation, nullptr);
 	VB_CHECK_VK_RESULT(owner->init_info.checkVkResult, result, "Failed to create image!");
-	VB_LOG_TRACE("[ vmaCreateImage ] name = %s, extent = %ux%ux%u, layers = %u",
-		info.name.data(), info.extent.width, info.extent.height, info.extent.depth,
-		info.layers);
 	
-
 	vk::ImageAspectFlags aspect{};
 	switch (info.format) {
 		case vk::Format::eD24UnormS8Uint:
@@ -1052,15 +1027,15 @@ auto DeviceResource::CreateImage(ImageInfo const& info) -> Image {
 			VB_CHECK_VK_RESULT(owner->init_info.checkVkResult, result, "Failed to create image view!");
 		}
 	}
-	if (info.usage & vk::ImageUsageFlagBits::eSampled) {
+	if (info.usage & ImageUsage::eSampled) {
 		VB_ASSERT(descriptor.resource != nullptr, "Descriptor resource not set!");
 		res->rid = descriptor.resource->PopID(DescriptorType::eCombinedImageSampler);
 	}
-	if (info.usage & vk::ImageUsageFlagBits::eStorage) {
+	if (info.usage & ImageUsage::eStorage) {
 		VB_ASSERT(descriptor.resource != nullptr, "Descriptor resource not set!");
 		res->rid = descriptor.resource->PopID(DescriptorType::eStorageImage);
 	}
-	if (info.usage & vk::ImageUsageFlagBits::eSampled) {
+	if (info.usage & ImageUsage::eSampled) {
 		ImageLayout newLayout = ImageLayout::eShaderReadOnlyOptimal;
 
 		vk::ImageAspectFlags ds = Aspect::eDepth | Aspect::eStencil;
@@ -1100,7 +1075,7 @@ auto DeviceResource::CreateImage(ImageInfo const& info) -> Image {
 
 		vkUpdateDescriptorSets(handle, 1, &write, 0, nullptr);
 	}
-	if (info.usage & vk::ImageUsageFlagBits::eStorage) {
+	if (info.usage & ImageUsage::eStorage) {
 		VkDescriptorImageInfo descriptorInfo = {
 			.sampler     = GetOrCreateSampler(info.sampler), // todo: remove
 			.imageView   = res->view,
@@ -1906,7 +1881,7 @@ void Command::BeginRendering(RenderingInfo const& info) {
 			.imageLayout = VkImageLayout(info.depth.image.resource->layout),
 			.loadOp      = VkAttachmentLoadOp(info.depth.loadOp),
 			.storeOp     = VkAttachmentStoreOp(info.depth.storeOp),
-			// .storeOp = info.depth.image.resource->usage & vk::ImageUsageFlagBits::eTransientAttachment 
+			// .storeOp = info.depth.image.resource->usage & ImageUsage::eTransientAttachment 
 			//	? VK_ATTACHMENT_STORE_OP_DONT_CARE
 			//	: VK_ATTACHMENT_STORE_OP_STORE,
 			.clearValue {
@@ -2056,6 +2031,10 @@ void Command::QueueSubmit(SubmitInfo const& submitInfo) {
 
 	auto result = vkQueueSubmit2(resource->queue->handle, 1, &info, resource->fence);
 	VB_CHECK_VK_RESULT(resource->owner->owner->init_info.checkVkResult, result, "Failed to submit command buffer");
+}
+
+auto Command::GetHandle() const -> vk::CommandBuffer {
+	return resource->handle;
 }
 
 auto InstanceResource::CreateDebugUtilsMessenger(
@@ -2229,16 +2208,8 @@ void InstanceResource::Create(InstanceInfo const& info){
 		}
 	}
 
-#ifdef VB_GLFW
-	if (info.glfw_extensions) {
-		// get all extensions required by glfw
-		u32 glfwExtensionCount = 0;
-		glfwInit();
-		char const** glfwExtensions;
-		glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
-		requiredInstanceExtensions.insert(requiredInstanceExtensions.end(), glfwExtensions, glfwExtensions + glfwExtensionCount);
-	}
-#endif
+	requiredInstanceExtensions.insert(requiredInstanceExtensions.end(),
+		init_info.extensions.begin(), init_info.extensions.end());
 	
 	// Extensions
 	if (info.validation_layers) {
@@ -2291,6 +2262,7 @@ void InstanceResource::Create(InstanceInfo const& info){
 		VK_VALIDATION_FEATURE_ENABLE_GPU_ASSISTED_EXT,
 		VK_VALIDATION_FEATURE_ENABLE_DEBUG_PRINTF_EXT,
 	};
+
 	if (validation_features) {
 		validationFeaturesInfo = {
 			.sType = VK_STRUCTURE_TYPE_VALIDATION_FEATURES_EXT,
@@ -2514,83 +2486,64 @@ void DeviceResource::Create(DeviceInfo const& info) {
 	std ::vector<u32> numQueuesToCreate;
 	// std::fill(numQueuesToCreate.begin(), numQueuesToCreate.end(), 0);
 
-#ifdef VB_GLFW
-	// Surfaces for checking present support
-	std::unordered_map<void*, VkSurfaceKHR> surfaces;
-	// Create surfaces for checking present support
-	for (auto queue: info.queues) {
-		if (queue.present_window == nullptr) {
-			continue;
-		}
-		VkSurfaceKHR surface;
-		auto res = glfwCreateWindowSurface(owner->handle,
-			reinterpret_cast<GLFWwindow*>(queue.present_window), owner->allocator, &surface);
-		if (res != VK_SUCCESS) {
-			VB_LOG_WARN("Failed to create surface for window: %p", (void*)queue.present_window);
-		} else {
-			surfaces.try_emplace(queue.present_window, surface);
-		}
-	}
 	// Add swapchain extension
-	if (!surfaces.empty()) {
-		requiredExtensions.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
-	}
-#endif
-
-	for (auto& physicalDevice : owner->physicalDevices) {
-		// Require extension support
-		if (!physicalDevice.SupportsExtensions(requiredExtensions)) {
-			continue;
+		if (std::any_of( info.queues.begin(), info.queues.end(),
+				[](QueueInfo const &q) { return bool(q.supported_surface); })) {
+			requiredExtensions.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
 		}
-		numQueuesToCreate.resize(physicalDevice.availableFamilies.size(), 0);
-		// std::fill(numQueuesToCreate.begin(), numQueuesToCreate.end(), 0);
 
-		bool deviceSuitable = true;
-		for (auto& queue_info: info.queues) {
-			// Queue choosing heuristics
-			std::span<PhysicalDeviceResource::QueueFamilyIndexRequest::AvoidInfo const> avoid_if_possible{};
-			if(queue_info.separate_family) {
-				switch (QueueFlags::MaskType(queue_info.flags)) {
-				case VK_QUEUE_COMPUTE_BIT: 
-					avoid_if_possible = {{{VK_QUEUE_GRAPHICS_BIT, 1.0f}, {VK_QUEUE_TRANSFER_BIT, 0.5f}}};
-					break;
-				case VK_QUEUE_TRANSFER_BIT:
-					avoid_if_possible = {{{VK_QUEUE_GRAPHICS_BIT, 1.0f}, {VK_QUEUE_COMPUTE_BIT, 0.5f}}};
-					break;
-				default:
-					avoid_if_possible = {{{VK_QUEUE_GRAPHICS_BIT, 1.0f}}};
-					break;
-				}
-			}
-
-			// Get family index fitting requirements
-			PhysicalDeviceResource::QueueFamilyIndexRequest request{
-				.desiredFlags = VkQueueFlags(queue_info.flags),
-				.undesiredFlags = 0,
-				.avoidIfPossible = avoid_if_possible,			
-				.numTakenQueues = numQueuesToCreate
-			};
-
-#ifdef VB_GLFW
-			if (queue_info.present_window != nullptr) {
-				request.surfaceToSupport = surfaces[queue_info.present_window];
-			}
-#endif
-
-			auto familyIndex = physicalDevice.GetQueueFamilyIndex(request);
-			if (familyIndex == PhysicalDeviceResource::QUEUE_NOT_FOUND) {
-				VB_LOG_WARN("Requested queue flags %d not available on device: %s",
-					QueueFlags::MaskType(queue_info.flags), physicalDevice.physicalProperties2.properties.deviceName);
-				deviceSuitable = false;
-				break;
-			} else if (familyIndex == PhysicalDeviceResource::ALL_SUITABLE_QUEUES_TAKEN) {
-				VB_LOG_WARN("Requested more queues with flags %d than available on device: %s. Queue was not created",
-					QueueFlags::MaskType(queue_info.flags), physicalDevice.physicalProperties2.properties.deviceName);
+		for (auto& physicalDevice : owner->physicalDevices) {
+			// Require extension support
+			if (!physicalDevice.SupportsExtensions(requiredExtensions)) {
 				continue;
 			}
-			// Create queue
-			numQueuesToCreate[familyIndex]++;
-		}
+			numQueuesToCreate.resize(physicalDevice.availableFamilies.size(), 0);
+			// std::fill(numQueuesToCreate.begin(), numQueuesToCreate.end(), 0);
+
+			bool deviceSuitable = true;
+			for (auto& queue_info: info.queues) {
+				// Queue choosing heuristics
+				std::span<PhysicalDeviceResource::QueueFamilyIndexRequest::AvoidInfo const> avoid_if_possible{};
+				if(queue_info.separate_family) {
+					switch (QueueFlags::MaskType(queue_info.flags)) {
+					case VK_QUEUE_COMPUTE_BIT: 
+						avoid_if_possible = {{{VK_QUEUE_GRAPHICS_BIT, 1.0f}, {VK_QUEUE_TRANSFER_BIT, 0.5f}}};
+						break;
+					case VK_QUEUE_TRANSFER_BIT:
+						avoid_if_possible = {{{VK_QUEUE_GRAPHICS_BIT, 1.0f}, {VK_QUEUE_COMPUTE_BIT, 0.5f}}};
+						break;
+					default:
+						avoid_if_possible = {{{VK_QUEUE_GRAPHICS_BIT, 1.0f}}};
+						break;
+					}
+				}
+
+				// Get family index fitting requirements
+				PhysicalDeviceResource::QueueFamilyIndexRequest request{
+					.desiredFlags = VkQueueFlags(queue_info.flags),
+					.undesiredFlags = 0,
+					.avoidIfPossible = avoid_if_possible,			
+					.numTakenQueues = numQueuesToCreate
+				};
+
+				if (queue_info.supported_surface) {
+					request.surfaceToSupport = queue_info.supported_surface;
+				}
+
+				auto familyIndex = physicalDevice.GetQueueFamilyIndex(request);
+				if (familyIndex == PhysicalDeviceResource::QUEUE_NOT_FOUND) {
+					VB_LOG_WARN("Requested queue flags %d not available on device: %s",
+						QueueFlags::MaskType(queue_info.flags), physicalDevice.physicalProperties2.properties.deviceName);
+					deviceSuitable = false;
+					break;
+				} else if (familyIndex == PhysicalDeviceResource::ALL_SUITABLE_QUEUES_TAKEN) {
+					VB_LOG_WARN("Requested more queues with flags %d than available on device: %s. Queue was not created",
+						QueueFlags::MaskType(queue_info.flags), physicalDevice.physicalProperties2.properties.deviceName);
+					continue;
+				}
+				// Create queue
+				numQueuesToCreate[familyIndex]++;
+			}
 		if (deviceSuitable) {
 			this->physicalDevice = &physicalDevice;
 			break;
@@ -2604,14 +2557,6 @@ void DeviceResource::Create(DeviceInfo const& info) {
 	VB_ASSERT(this->physicalDevice != nullptr, "Failed to find suitable device");
 
 	name += physicalDevice->physicalProperties2.properties.deviceName;
-
-#ifdef VB_GLFW
-	// Destroy test surfaces
-	VB_LOG_TRACE("Destroying %zu test surfaces", surfaces.size());
-	for (auto& [window, surface]: surfaces) {
-		vkDestroySurfaceKHR(owner->handle, surface, owner->allocator);
-	}
-#endif
 
 	u32 maxQueuesInFamily = 0;
 	for (auto& family: physicalDevice->availableFamilies) {
@@ -2800,7 +2745,6 @@ void DeviceResource::Create(DeviceInfo const& info) {
 	// vkDestroyAccelerationStructureKHR = reinterpret_cast<PFN_vkDestroyAccelerationStructureKHR>
 	// 	(vkGetDeviceProcAddr(handle, "vkDestroyAccelerationStructureKHR"));
 
-#ifdef VB_IMGUI
 	VkDescriptorPoolSize imguiPoolSizes[] = {
 		{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1000},
 		{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1000} 
@@ -2816,7 +2760,6 @@ void DeviceResource::Create(DeviceInfo const& info) {
 
 	result = vkCreateDescriptorPool(handle, &imguiPoolInfo, owner->allocator, &imguiDescriptorPool);
 	VB_CHECK_VK_RESULT(owner->init_info.checkVkResult, result, "Failed to create imgui descriptor pool!");
-#endif
 	
 	// Create command buffers
 	for (auto& q: queuesResources) {
@@ -2834,7 +2777,6 @@ void DeviceResource::Create(DeviceInfo const& info) {
 	stagingCpu = reinterpret_cast<u8*>(staging.resource->allocation->GetMappedData());
 }
 
-#ifdef VB_GLFW
 bool SwapChainResource::SupportsFormat(VkFormat format, VkImageTiling tiling, VkFormatFeatureFlags features) {
 	VkFormatProperties props;
 	vkGetPhysicalDeviceFormatProperties(owner->physicalDevice->handle, format, &props);
@@ -2881,32 +2823,26 @@ void SwapChainResource::ChooseExtent() {
 	}
 }
 
-void SwapChainResource::CreateSurface() {
-	VB_VK_RESULT result = glfwCreateWindowSurface(owner->owner->handle,
-		reinterpret_cast<GLFWwindow*>(init_info.window), owner->owner->allocator, &surface);
-	VB_CHECK_VK_RESULT(owner->owner->init_info.checkVkResult, result, "Failed to create window surface!");
-}
-
 void SwapChainResource::CreateSurfaceFormats() {
 	// get capabilities
-	vkGetPhysicalDeviceSurfaceCapabilitiesKHR(owner->physicalDevice->handle, surface, &surface_capabilities);
+	vkGetPhysicalDeviceSurfaceCapabilitiesKHR(owner->physicalDevice->handle, init_info.surface, &surface_capabilities);
 
 	// get surface formats
 	u32 formatCount;
-	vkGetPhysicalDeviceSurfaceFormatsKHR(owner->physicalDevice->handle, surface, &formatCount, nullptr);
+	vkGetPhysicalDeviceSurfaceFormatsKHR(owner->physicalDevice->handle, init_info.surface, &formatCount, nullptr);
 	if (formatCount != 0) {
 		available_surface_formats.clear();
 		available_surface_formats.resize(formatCount);
-		vkGetPhysicalDeviceSurfaceFormatsKHR(owner->physicalDevice->handle, surface, &formatCount, available_surface_formats.data());
+		vkGetPhysicalDeviceSurfaceFormatsKHR(owner->physicalDevice->handle, init_info.surface, &formatCount, available_surface_formats.data());
 	}
 
 	// get present modes
 	u32 modeCount;
-	vkGetPhysicalDeviceSurfacePresentModesKHR(owner->physicalDevice->handle, surface, &modeCount, nullptr);
+	vkGetPhysicalDeviceSurfacePresentModesKHR(owner->physicalDevice->handle, init_info.surface, &modeCount, nullptr);
 	if (modeCount != 0) {
 		available_present_modes.clear();
 		available_present_modes.resize(modeCount);
-		vkGetPhysicalDeviceSurfacePresentModesKHR(owner->physicalDevice->handle, surface, &modeCount, available_present_modes.data());
+		vkGetPhysicalDeviceSurfacePresentModesKHR(owner->physicalDevice->handle, init_info.surface, &modeCount, available_present_modes.data());
 	}
 
 	// set this device as not suitable if no surface formats or present modes available
@@ -2947,7 +2883,7 @@ void SwapChainResource::CreateSwapchain() {
 	// Create swapchain
 	VkSwapchainCreateInfoKHR createInfo {
 		.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
-		.surface = surface,
+		.surface = init_info.surface,
 		.minImageCount = image_count,
 		.imageFormat = VkFormat(init_info.color_format),
 		.imageColorSpace = static_cast<VkColorSpaceKHR>(init_info.color_space),
@@ -3051,7 +2987,6 @@ void SwapChainResource::CreateCommands() {
 
 void SwapChainResource::Create(SwapchainInfo const& info) {
 	init_info = info;
-	CreateSurface();
 	CreateSurfaceFormats();
 	ChooseSurfaceFormat();
 	ChoosePresentMode();
@@ -3090,7 +3025,9 @@ void SwapChainResource::Free() {
 
 	vkDestroySwapchainKHR(owner->handle, handle, owner->owner->allocator);
 
-	vkDestroySurfaceKHR(owner->owner->handle, surface, owner->owner->allocator);
+	if (init_info.destroy_surface) {
+		vkDestroySurfaceKHR(owner->owner->handle, init_info.surface, owner->owner->allocator);
+	}
 
 	handle = VK_NULL_HANDLE;
 }
@@ -3138,6 +3075,10 @@ bool Swapchain::AcquireImage() {
 		VB_CHECK_VK_RESULT(resource->owner->owner->init_info.checkVkResult, result, "Failed to acquire swap chain image!");
 		return false;
 	}
+}
+
+auto Swapchain::GetFormat() -> Format {
+	return resource->init_info.color_format;
 }
 
 bool Swapchain::GetDirty() {
@@ -3198,7 +3139,6 @@ auto Device::CreateSwapchain(SwapchainInfo const& info) -> Swapchain {
 	swapchain.resource->Create(info);
 	return swapchain;
 }
-#endif // VB_GLFW
 
 auto Device::CreateDescriptor(std::span<BindingInfo const> bindings) -> Descriptor {
 	VB_ASSERT(bindings.size() > 0, "Descriptor must have at least one binding");
@@ -3546,7 +3486,7 @@ void Command::Barrier(MemoryBarrier const& barrier) {
 		.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
 		.memoryBarrierCount = 1,
 		.pMemoryBarriers = &barrier2,
-	};
+	};auto ff = vb::BufferUsage::eStorageBuffer | vb::BufferUsage::eTransferDst;
 	vkCmdPipelineBarrier2(resource->handle, &dependency);
 }
 
@@ -3570,17 +3510,11 @@ void Command::Blit(BlitInfo const& info) {
 	auto regions = info.regions;
 
 	ImageBlit const fullRegions[] = {{
-		{{0, 0, 0},
-		{static_cast<int>(dst.resource->extent.width),
-		static_cast<int>(dst.resource->extent.height),
-		static_cast<int>(dst.resource->extent.depth)}},
-		{{0, 0, 0},
-		{static_cast<int>(src.resource->extent.width),
-		static_cast<int>(src.resource->extent.height),
-		static_cast<int>(dst.resource->extent.depth)}}
+		{{0, 0, 0}, Offset3D(dst.resource->extent)},
+		{{0, 0, 0}, Offset3D(src.resource->extent)}
 	}};
 
-        if (regions.empty()) {
+	if (regions.empty()) {
 		regions = fullRegions;
 	}
 
@@ -3636,16 +3570,16 @@ auto DeviceResource::CreateSampler(SamplerInfo const& info) -> VkSampler {
 		.mipLodBias = 0.0f,
 
 		.anisotropyEnable = info.anisotropyEnable == false
-							? VK_FALSE
-							: physicalDevice->physicalFeatures2.features.samplerAnisotropy,
+						? VK_FALSE
+						: physicalDevice->physicalFeatures2.features.samplerAnisotropy,
 		.maxAnisotropy = info.maxAnisotropy,
 		.compareEnable = info.compareEnable == false ? VK_FALSE : VK_TRUE,
-		.compareOp = (VkCompareOp)info.compareOp,
+		.compareOp = VkCompareOp(info.compareOp),
 
 		.minLod = info.minLod,
 		.maxLod = info.maxLod,
 
-		.borderColor = (VkBorderColor)info.borderColor,
+		.borderColor = VkBorderColor(info.borderColor),
 		.unnormalizedCoordinates = info.unnormalizedCoordinates,
 	};
 
@@ -3667,69 +3601,30 @@ auto DeviceResource::GetOrCreateSampler(SamplerInfo const& desc) -> VkSampler {
 	}
 }
 
-
-#ifdef VB_IMGUI
-void ImGuiCheckVulkanResult(VkResult result) {
-	// VB_CHECK_VK_RESULT(instance->init_info.checkVkResult, result, "ImGui error!");
-	CheckVkResultDefault(result, "ImGui error!");
+auto Swapchain::GetImGuiInfo() -> ImGuiInitInfo {
+	return resource->GetImGuiInfo();
 }
 
-void Swapchain::CreateImGui(SampleCount sampleCount) {
-	resource->CreateImGui(reinterpret_cast<GLFWwindow*>(resource->init_info.window), sampleCount);
-}
-
-void SwapChainResource::CreateImGui(GLFWwindow* window, SampleCount sampleCount) {
-	VkFormat colorFormats[] = { VK_FORMAT_R8G8B8A8_UNORM };
-	VkFormat depthFormat =  VK_FORMAT_D32_SFLOAT;
-	u32 min_images =
-			surface_capabilities.minImageCount >= 2
-		? surface_capabilities.minImageCount
-		: 2u;
-	ImGui_ImplVulkan_InitInfo init_info{
+auto SwapChainResource::GetImGuiInfo() -> ImGuiInitInfo {
+	ImGuiInitInfo init_info{
 		.Instance            = owner->owner->handle,
 		.PhysicalDevice      = owner->physicalDevice->handle,
 		.Device              = owner->handle,
 		.QueueFamily         = commands[0].resource->queue->familyIndex,
 		.Queue               = commands[0].resource->queue->handle,
 		.DescriptorPool      = owner->imguiDescriptorPool,
-		.MinImageCount       = min_images,
+		.MinImageCount       = std::max(surface_capabilities.minImageCount, 2u),
 		.ImageCount          = (u32)images.size(),
-		// .MSAASamples         = (VkSampleCountFlagBits)std::min(device->physicalDevice->maxSamples, sampleCount),
-		.MSAASamples         = VK_SAMPLE_COUNT_1_BIT,
 		.PipelineCache       = owner->pipelineCache,
 		.UseDynamicRendering = true,
-		.PipelineRenderingCreateInfo = {
-			.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
-			.colorAttachmentCount    = 1,
-			.pColorAttachmentFormats = colorFormats,
-			.depthAttachmentFormat   = depthFormat,
-		},
-		.Allocator           = owner->owner->allocator,
-		.CheckVkResultFn     = ImGuiCheckVulkanResult,
+		.Allocator           = reinterpret_cast<vk::AllocationCallbacks const*>(owner->owner->allocator),
 	};
-	ImGui_ImplGlfw_InitForVulkan(window, true);
-	ImGui_ImplVulkan_Init(&init_info);
+	return init_info;
 }
-
-void ImGuiNewFrame() {
-	ImGui_ImplVulkan_NewFrame();
-	ImGui_ImplGlfw_NewFrame();
-}
-
-void Command::DrawImGui(void* imDrawData) {
-	ImGui_ImplVulkan_RenderDrawData(static_cast<ImDrawData*>(imDrawData), resource->handle);
-}
-
-void ImGuiShutdown() {
-	ImGui_ImplVulkan_Shutdown();
-	ImGui_ImplGlfw_Shutdown();
-}
-#endif // VB_IMGUI
-
 
 void CheckVkResultDefault(int result, char const* message) {
-    if (result == VK_SUCCESS) [[likely]] {
-        return;
+	if (result == VK_SUCCESS) [[likely]] {
+		return;
 	}
 	// stderr macro is not accessible with std module
 #if !defined(VB_USE_STD_MODULE) || !VB_USE_STD_MODULE
@@ -3737,8 +3632,8 @@ void CheckVkResultDefault(int result, char const* message) {
 #else
 	std::cerr << "[VULKAN ERROR: " << StringFromVkResult(result) << "] " << message << '\n';
 #endif
-    if (result < 0) {
-        std::abort();
+	if (result < 0) {
+		std::abort();
 	}
 }
 

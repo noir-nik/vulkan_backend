@@ -77,14 +77,6 @@ using VB_NAMESPACE::CreateInstance;
 using VB_NAMESPACE::StringFromVkResult;
 using VB_NAMESPACE::CheckVkResultDefault;
 
-#ifdef VB_IMGUI
-using VB_NAMESPACE::ImGuiNewFrame;
-using VB_NAMESPACE::ImGuiShutdown;
-#endif
-
-/* 
-	"enums.hpp"
-*/
 using VB_NAMESPACE::Memory;
 using VB_NAMESPACE::BufferUsage;
 using VB_NAMESPACE::ImageUsageFlags;
@@ -140,4 +132,12 @@ using VB_NAMESPACE::MemoryBarrier;
 using VB_NAMESPACE::BufferBarrier;
 using VB_NAMESPACE::ImageBarrier;
 }
+
+export {
+using VB_NAMESPACE::operator&;
+using VB_NAMESPACE::operator|;
+using VB_NAMESPACE::operator^;
+using VB_NAMESPACE::operator~;
+}
+
 // NOLINTEND(misc-unused-using-decls)

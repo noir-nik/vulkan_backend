@@ -33,26 +33,35 @@ using u64 = std::uint64_t;
 using vk::DeviceAddress;
 using vk::Format;
 
+using vk::Flags;
 using vk::BufferUsageFlags;
 using vk::ImageUsageFlags;
 using vk::QueueFlags;
 using vk::CullModeFlags;
 using vk::ResolveModeFlags;
 
+using vk::operator&;
+using vk::operator|;
+using vk::operator^;
+using vk::operator~;
+
 using BufferUsage    = vk::BufferUsageFlagBits;
+using ImageUsage     = vk::ImageUsageFlagBits;
 using Aspect         = vk::ImageAspectFlagBits;
 using ShaderStage    = vk::ShaderStageFlagBits;
 using ResolveMode    = vk::ResolveModeFlagBits;
-using PresentMode    = vk::PresentModeKHR;
 using LoadOp         = vk::AttachmentLoadOp;
 using StoreOp        = vk::AttachmentStoreOp;
-using ColorSpace     = vk::ColorSpaceKHR;
 using DynamicState   = vk::DynamicState;
 using CullMode       = vk::CullModeFlagBits;
 using DescriptorType = vk::DescriptorType;
 using QueueFlagBits  = vk::QueueFlagBits;
 using PipelinePoint  = vk::PipelineBindPoint;
+using PresentMode    = vk::PresentModeKHR;
+using ColorSpace     = vk::ColorSpaceKHR;
+using Surface        = vk::SurfaceKHR;
 
+auto constexpr inline DebugUtils = vk::EXTDebugUtilsExtensionName;
 
 struct PhysicalDeviceResource;
 struct InstanceResource;
@@ -83,7 +92,7 @@ class Swapchain;
 class Queue;
 class Pipeline;
 
-u32 constexpr inline kMaxFramesInFlight = 3;
+u32 constexpr inline kFramesInFlight = 3;
 u32 constexpr inline kAdditionalImages  = 0;
 u32 constexpr inline kStagingSize = 64 * 1024 * 1024;
 
@@ -166,8 +175,8 @@ public:
 
 struct QueueInfo {
 	QueueFlags flags = QueueFlagBits::eGraphics;
-	bool  separate_family = false;   // Prefer separate family
-	void* present_window = nullptr;  // Platform window
+	bool       separate_family   = false;    // Prefer separate family
+	Surface    supported_surface = nullptr;
 };
 
 struct Source  {
@@ -311,6 +320,8 @@ public:
 	void End();
 	void QueueSubmit(SubmitInfo const& submitInfo = {});
 
+	[[nodiscard]] auto GetHandle() const -> vk::CommandBuffer;
+
 private:
 	std::shared_ptr<CommandResource> resource;
 	friend Device;
@@ -320,13 +331,14 @@ private:
 };
 
 struct SwapchainInfo {
-	void*       window;
+	Surface     surface;
 	Extent2D    extent;
 	Queue       queue;
-	u32         frames_in_flight  = kMaxFramesInFlight;
+	bool        destroy_surface   = false;
+	u32         frames_in_flight  = kFramesInFlight;
 	u32         additional_images = kAdditionalImages;
 	// Preferred color format, not guaranteed, get actual format after creation
-	Format  color_format      = Format::eR8G8B8A8Unorm;
+	Format  color_format          = Format::eR8G8B8A8Unorm;
 	ColorSpace  color_space       = ColorSpace::eSrgbNonlinear;
 	PresentMode present_mode      = PresentMode::eMailbox;
 };
@@ -420,22 +432,18 @@ struct ImGuiInitInfo
     vk::SampleCountFlagBits           MSAASamples;
 
     vk::PipelineCache                 PipelineCache;
-    u32                               Subpass;
 
-    bool                               UseDynamicRendering;
-    vk::PipelineRenderingCreateInfoKHR PipelineRenderingCreateInfo;
+    bool                              UseDynamicRendering;
 
     const vk::AllocationCallbacks*    Allocator;
     void                              (*CheckVkResultFn)(vk::Result err);
     vk::DeviceSize                    MinAllocationSize;
 };
 
-#ifdef VB_GLFW
+
 class Swapchain {
 public:
-#ifdef VB_IMGUI
-	void CreateImGui(SampleCount sample_count);
-#endif
+	auto GetImGuiInfo() -> ImGuiInitInfo;
 	void Recreate(u32 width, u32 height);
 	bool AcquireImage();
 	void SubmitAndPresent();
@@ -443,11 +451,12 @@ public:
 	[[nodiscard]] auto GetCurrentImage()  -> Image&;
 	[[nodiscard]] auto GetCommandBuffer() -> Command&;
 	[[nodiscard]] auto GetDirty()         -> bool;
+	[[nodiscard]] auto GetFormat()        -> Format;
 private:
 	std::shared_ptr<SwapChainResource> resource;
 	friend Device;
 };
-#endif
+
 
 class PhysicalDevice{
 	std::shared_ptr<PhysicalDeviceResource> resource;
@@ -461,6 +470,7 @@ class Instance {
 	friend auto CreateInstance(InstanceInfo const& info) -> Instance;
 public:
 	auto CreateDevice(DeviceInfo const& info = {}) -> Device;
+	[[nodiscard]] auto GetHandle() const -> vk::Instance;
 };
 
 auto StringFromVkResult(int result) -> char const*;
@@ -474,18 +484,12 @@ struct InstanceInfo {
 	bool validation_layers      = false;
 	bool debug_report           = false;
 
-	// Platform extensions
-	bool glfw_extensions        = false;
+	// Additional instance extensions
+	std::span<char const*> extensions = {};
 };
 
 auto CreateInstance(InstanceInfo const& info = {}) -> Instance;
 void SetLogLevel(LogLevel level);
-
-#ifdef VB_IMGUI
-void ImGuiNewFrame();
-void ImGuiShutdown();
-#endif
-
 
 } // namespace VB_NAMESPACE
 

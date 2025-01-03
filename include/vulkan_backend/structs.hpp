@@ -27,26 +27,29 @@ using u32 = std::uint32_t;
 using u64 = std::uint64_t;
 
 using vk::Extent2D;
-using vk::Extent3D;
+// using vk::Extent3D;
 using vk::Offset2D;
 using vk::Offset3D;
 using vk::Rect2D;
 
+using vk::ClearColorValue;
+using vk::ClearDepthStencilValue;
+using vk::ClearValue;
 using vk::QueueFamilyIgnored;
 using vk::DeviceSize;
 using vk::WholeSize;
 using vk::ImageLayout;
+using vk::AccessFlags;
+using vk::Filter;
+using vk::CompareOp;
+using vk::BorderColor;
 
 using PipelineStageFlags = vk::PipelineStageFlags2;
 using PipelineStage = vk::PipelineStageFlagBits2;
 using Access = vk::AccessFlagBits2;
-using AccessFlags = vk::AccessFlags;
 using SampleCount = vk::SampleCountFlagBits;
-using Filter = vk::Filter;
 using MipmapMode = vk::SamplerMipmapMode;
 using WrapMode = vk::SamplerAddressMode;
-using CompareOp = vk::CompareOp;
-using BorderColor = vk::BorderColor;
 
 struct Viewport {
     float    x;
@@ -56,9 +59,26 @@ struct Viewport {
     float    minDepth = 0.0f;
     float    maxDepth = 1.0f;
 };
-using vk::ClearColorValue;
-using vk::ClearDepthStencilValue;
-using vk::ClearValue;
+
+
+struct Extent3D {
+	u32 width  = 0;
+	u32 height = 0;
+	u32 depth  = 1;
+
+	operator vk::Extent3D(){
+		return {width, height, depth};
+	}
+
+	explicit operator Offset3D(){
+		return {
+		static_cast<int>(width),
+		static_cast<int>(height),
+		static_cast<int>(depth)
+		};
+	}
+};
+
 // union ClearColorValue {
 //     float float32[4];
 //     i32   int32[4];

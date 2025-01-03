@@ -5,12 +5,6 @@
 	Possible options
 */
 
-//	Include imgui headers and provide imgui functions
-// #define VB_IMGUI
-
-// Include glfw headers and provide glfw functions
-// #define VB_GLFW
-
 // Disable result checks of vk.. calls
 // #define VB_DISABLE_VK_RESULT_CHECK
 
