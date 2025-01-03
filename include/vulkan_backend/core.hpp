@@ -39,6 +39,10 @@ using vk::ImageUsageFlags;
 using vk::QueueFlags;
 using vk::CullModeFlags;
 using vk::ResolveModeFlags;
+using vk::Semaphore;
+using vk::SemaphoreSubmitInfo;
+using vk::CommandBufferSubmitInfo;
+using vk::Fence;
 
 using vk::operator&;
 using vk::operator|;
@@ -60,6 +64,7 @@ using PipelinePoint  = vk::PipelineBindPoint;
 using PresentMode    = vk::PresentModeKHR;
 using ColorSpace     = vk::ColorSpaceKHR;
 using Surface        = vk::SurfaceKHR;
+using SurfaceFormat  = vk::SurfaceFormatKHR;
 
 auto constexpr inline DebugUtils = vk::EXTDebugUtilsExtensionName;
 
@@ -73,7 +78,6 @@ struct ImageResource;
 struct PipelineResource;
 struct CommandResource;
 struct QueueResource;
-struct Semaphore;
 
 struct BufferInfo;
 struct ImageInfo;
@@ -113,10 +117,10 @@ enum class Memory {
 using MemoryFlags = vk::Flags<Memory>;
 
 struct BufferInfo {
-	u64              size;
-	BufferUsageFlags usage;
-	MemoryFlags      memory = Memory::GPU;
-	std::string_view name = "";
+	u64                     size;
+	BufferUsageFlags        usage;
+	MemoryFlags             memory = Memory::GPU;
+	std::string_view        name = "";
 };
 
 class Buffer {
@@ -145,13 +149,24 @@ public:
 };
 
 struct ImageInfo {
-	Extent3D          extent;
-	Format            format;
-	ImageUsageFlags   usage;
-	SampleCount       samples = SampleCount::e1;
-	SamplerInfo       sampler = {};
-	u32               layers  = 1;
-	std::string_view  name    = "";
+	Extent3D const&          extent;
+	Format const&            format;
+	ImageUsageFlags const&   usage;
+	SampleCount              samples = SampleCount::e1;
+	SamplerInfo              sampler = {};
+	u32                      layers  = 1;
+	std::string_view         name    = "";
+};
+
+struct SubmitInfo {
+	std::span<SemaphoreSubmitInfo const> waitSemaphoreInfos;
+	std::span<SemaphoreSubmitInfo const> signalSemaphoreInfos;
+};
+
+struct QueueInfo {
+	QueueFlags flags             = QueueFlagBits::eGraphics;
+	bool       separate_family   = false;    // Prefer separate family
+	Surface    supported_surface = nullptr;
 };
 
 class Queue {
@@ -159,6 +174,7 @@ class Queue {
 	friend SwapChainResource;
 	friend Swapchain;
 	friend CommandResource;
+	friend Command;
 	friend DeviceResource;
 	friend Device;
 public:
@@ -166,17 +182,14 @@ public:
 		return resource != nullptr;
 	}
 
-	[[nodiscard]] auto GetCommandBuffer() -> Command&;
-
-	auto GetFlags() const -> QueueFlags;
-	auto HasSeparateFamily() const -> bool;
-	auto SupportsPresentTo(void const* window) const -> bool;
-};
-
-struct QueueInfo {
-	QueueFlags flags = QueueFlagBits::eGraphics;
-	bool       separate_family   = false;    // Prefer separate family
-	Surface    supported_surface = nullptr;
+	void Submit(
+		std::span<CommandBufferSubmitInfo const> cmds,
+		Fence fence = nullptr,
+		SubmitInfo const& info = {}
+	) const;
+	[[nodiscard]] auto GetInfo() const -> QueueInfo;
+	[[nodiscard]] auto GetFamilyIndex() const -> u32;
+	[[nodiscard]] auto GetHandle() const -> vk::Queue;
 };
 
 struct Source  {
@@ -186,7 +199,7 @@ struct Source  {
 		RawSlang,
 		RawSpirv,
 	};
-	std::string_view data;
+	std::string_view const& data;
 	Type type = File;
 };
 
@@ -194,11 +207,11 @@ class Pipeline {
 public:
 	struct Stage {
 		// Shader stage, e.g. Vertex, Fragment, Compute or other
-		ShaderStage stage;
+		ShaderStage const& stage;
 
 		// Shader code: any glsl or .slang or .spv. It can be file name or raw code.
 		// Specify type if data is a string with shader code
-		Source source;
+		Source const& source;
 
 		// Output path for compiled .spv. Has effect only if compilation is done
 		std::string_view out_path = ".";
@@ -226,29 +239,19 @@ private:
 
 struct PipelineInfo {
 	// Necessary for any pipeline creation
-	PipelinePoint                    point;
-	std::span<Pipeline::Stage const> stages;
+	PipelinePoint const&                    point;
+	std::span<Pipeline::Stage const> const& stages;
 	
 	// Data for graphics pipeline
 	std::span<Format const>          vertexAttributes  = {};
 	std::span<Format const>          color_formats     = {};
 	bool                             use_depth         = false;
-	Format                       depth_format          = Format::eUndefined;
+	Format                           depth_format      = Format::eUndefined;
 	SampleCount                      samples           = SampleCount::e1;
 	CullModeFlags                    cullMode          = CullMode::eNone;
 	bool                             line_topology     = false;
 	std::span<DynamicState const>    dynamicStates     = {{DynamicState::eViewport, DynamicState::eScissor}};
 	std::string_view                 name              = "";
-};
-
-
-struct SubmitInfo {
-	Semaphore*         waitSemaphore   = nullptr;
-	PipelineStageFlags waitStages      = PipelineStage::eNone;
-	Semaphore*         signalSemaphore = nullptr;
-	PipelineStageFlags signalStages    = PipelineStage::eNone;
-	u64                waitValue       = 0;
-	u64                signalValue     = 0;
 };
 
 struct RenderingInfo {
@@ -270,18 +273,15 @@ struct RenderingInfo {
 	std::span<ColorAttachment const> colorAttachs;
 	DepthStencilAttachment const&    depth      = {.image = {}};
 	DepthStencilAttachment const&    stencil    = {.image = {}};
-	Rect2D                           renderArea = Rect2D{};  // == use size of colorAttachs[0] or depth
+	Rect2D const&                    renderArea = Rect2D{};  // == use size of colorAttachs[0] or depth
 	u32                              layerCount = 1;
 };
 
 struct BlitInfo {
-	Image dst;
-	Image src;
+	Image const& dst;
+	Image const& src;
 	std::span<ImageBlit const> regions = {};
 	Filter filter                      = Filter::eLinear;
-};
-
-struct BarrierInfo {
 };
 
 class Command {
@@ -318,9 +318,10 @@ public:
 
 	void Begin();
 	void End();
-	void QueueSubmit(SubmitInfo const& submitInfo = {});
+	void QueueSubmit(Queue const& queue, SubmitInfo const& info = {});
 
 	[[nodiscard]] auto GetHandle() const -> vk::CommandBuffer;
+	[[nodiscard]] auto GetFence() const  -> Fence;
 
 private:
 	std::shared_ptr<CommandResource> resource;
@@ -331,16 +332,16 @@ private:
 };
 
 struct SwapchainInfo {
-	Surface     surface;
-	Extent2D    extent;
-	Queue       queue;
-	bool        destroy_surface   = false;
-	u32         frames_in_flight  = kFramesInFlight;
-	u32         additional_images = kAdditionalImages;
-	// Preferred color format, not guaranteed, get actual format after creation
-	Format  color_format          = Format::eR8G8B8A8Unorm;
-	ColorSpace  color_space       = ColorSpace::eSrgbNonlinear;
-	PresentMode present_mode      = PresentMode::eMailbox;
+	Surface const&  surface;
+	Extent2D const& extent;
+	u32 const&      queueFamilyindex; // for command buffers
+	bool            destroy_surface   = false;
+	u32             frames_in_flight  = kFramesInFlight;
+	u32             additional_images = kAdditionalImages;
+	// Preferred color format, not guaranteed, get actual format after creation with GetFormat()
+	Format          preferred_format  = Format::eR8G8B8A8Unorm;
+	ColorSpace      color_space       = ColorSpace::eSrgbNonlinear;
+	PresentMode     present_mode      = PresentMode::eMailbox;
 };
 
 class Descriptor {
@@ -359,7 +360,7 @@ struct BindingInfo {
 	u32 static constexpr kBindingAuto = ~0u;
 	u32 static constexpr kMaxDescriptors = 8192;
 	// Type of descriptor (e.g., DescriptorType::Sampler)
-	DescriptorType type;
+	DescriptorType const& type;
 	// Binding number for this type.
 	// If not specified, will be assigned automatically
 	u32 binding = kBindingAuto;
@@ -378,6 +379,7 @@ public:
 	auto CreateBuffer(BufferInfo const& info)         -> Buffer;
 	auto CreatePipeline(PipelineInfo const& info)     -> Pipeline;
 	auto CreateSwapchain(SwapchainInfo const& info)   -> Swapchain;
+	auto CreateCommand(u32 queueFamilyindex)          -> Command;
 	
 	auto CreateDescriptor(std::span<BindingInfo const> bindings = {{
 		{DescriptorType::eSampledImage},
@@ -420,24 +422,15 @@ struct DeviceInfo {
 
 struct ImGuiInitInfo
 {
-    vk::Instance                      Instance;
-    vk::PhysicalDevice                PhysicalDevice;
-    vk::Device                        Device;
-    u32                               QueueFamily;
-    vk::Queue                         Queue;
-    vk::DescriptorPool                DescriptorPool;
-    vk::RenderPass                    RenderPass;
-    u32                               MinImageCount;
-    u32                               ImageCount;
-    vk::SampleCountFlagBits           MSAASamples;
-
-    vk::PipelineCache                 PipelineCache;
-
-    bool                              UseDynamicRendering;
-
-    const vk::AllocationCallbacks*    Allocator;
-    void                              (*CheckVkResultFn)(vk::Result err);
-    vk::DeviceSize                    MinAllocationSize;
+	vk::Instance                      Instance;
+	vk::PhysicalDevice                PhysicalDevice;
+	vk::Device                        Device;
+	vk::DescriptorPool                DescriptorPool;
+	u32                               MinImageCount;
+	u32                               ImageCount;
+	vk::PipelineCache                 PipelineCache;
+	bool                              UseDynamicRendering;
+	const vk::AllocationCallbacks*    Allocator;
 };
 
 
@@ -446,7 +439,7 @@ public:
 	auto GetImGuiInfo() -> ImGuiInitInfo;
 	void Recreate(u32 width, u32 height);
 	bool AcquireImage();
-	void SubmitAndPresent();
+	void SubmitAndPresent(Queue const& submit, Queue const& present);
 
 	[[nodiscard]] auto GetCurrentImage()  -> Image&;
 	[[nodiscard]] auto GetCommandBuffer() -> Command&;

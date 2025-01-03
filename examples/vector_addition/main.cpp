@@ -103,8 +103,8 @@ int main(){
 		.vector_size       = vector_size,
 	};
 
-	// Each queue is created with a command buffer
-	vb::Command cmd = queue.GetCommandBuffer();
+	// Create a command buffer with command pool
+	vb::Command cmd = device.CreateCommand(queue.GetFamilyIndex());
 
 	// Begin command buffer
 	cmd.Begin();
@@ -134,7 +134,7 @@ int main(){
 
 	// End command buffer, submit and wait on queue
 	cmd.End();
-	cmd.QueueSubmit();
+	cmd.QueueSubmit(queue);
 	device.WaitQueue(queue);
 	
 	// Map result

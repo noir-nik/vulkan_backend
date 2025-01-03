@@ -258,11 +258,11 @@ struct InstanceResource: NoCopyNoMove, std::enable_shared_from_this<InstanceReso
 };
 
 struct QueueResource : NoCopy {
+	DeviceResource* device = nullptr;
 	u32 familyIndex = ~0;
 	u32 index = 0;
 	QueueInfo init_info;
 	VkQueue handle = VK_NULL_HANDLE;
-	Command command;
 };
 
 struct DeviceResource : ResourceBase<InstanceResource>, std::enable_shared_from_this<DeviceResource> {
@@ -540,19 +540,23 @@ struct DescriptorResource : ResourceBase<DeviceResource> {
 	using ResourceBase::ResourceBase;
 
 	inline auto PopID(DescriptorType type) -> u32 {
-		VB_ASSERT(bindings.contains(type), "Descriptor type not found");
-		u32 id = bindings[type].resourceIDs.back();
-		bindings[type].resourceIDs.pop_back();
+		auto it = bindings.find(type);
+		VB_ASSERT(it != bindings.end(), "Descriptor type not found");
+		u32 id = it->second.resourceIDs.back();
+		it->second.resourceIDs.pop_back();
 		return id; 
 	}
 
 	inline void PushID(DescriptorType type, u32 id) {
-		bindings[type].resourceIDs.push_back(id);
+		auto it = bindings.find(type);
+		VB_ASSERT(it != bindings.end(), "Descriptor type not found");
+		it->second.resourceIDs.push_back(id);
 	}
 
 	inline auto GetBinding(DescriptorType type) -> u32 {
-		VB_ASSERT(bindings.contains(type), "Descriptor type not found");
-		return bindings[type].binding;
+		auto it = bindings.find(type);
+		VB_ASSERT(it != bindings.end(), "Descriptor type not found");
+		return it->second.binding;
 	}
 
 	void Create(std::span<BindingInfo const> bindings);
@@ -652,13 +656,13 @@ struct PipelineResource : ResourceBase<DeviceResource> {
 
 struct CommandResource : ResourceBase<DeviceResource> {
 	VkCommandBuffer handle = VK_NULL_HANDLE;
-	QueueResource*  queue = nullptr;
-	VkCommandPool   pool = VK_NULL_HANDLE;
+	// QueueResource*  queue = nullptr;
+	VkCommandPool   pool  = VK_NULL_HANDLE;
 	VkFence         fence = VK_NULL_HANDLE;
 
 	using ResourceBase::ResourceBase;
 
-	void Create(QueueResource* queue);
+	void Create(u32 queueFamilyindex);
 
 	auto GetType() -> char const* override { return "CommandResource"; }
 
@@ -684,7 +688,8 @@ struct SwapChainResource: ResourceBase<DeviceResource> {
 	u32 current_image_index = 0;
 	bool dirty = true;
 
-	SwapchainInfo init_info;
+	SwapchainInfo init_info = {{}, {}, {}};
+	Extent2D extent;
 
 	auto GetImGuiInfo() -> ImGuiInitInfo;
 
@@ -696,13 +701,13 @@ struct SwapChainResource: ResourceBase<DeviceResource> {
 	}
 	auto SupportsFormat(VkFormat format, VkImageTiling tiling, VkFormatFeatureFlags features) -> bool;
 	void CreateSurfaceFormats();
-	void ChooseSurfaceFormat();
-	void ChoosePresentMode();
-	void ChooseExtent();
+	auto ChooseSurfaceFormat(SurfaceFormat const& desired_surface_format) -> SurfaceFormat;
+	auto ChoosePresentMode(PresentMode const& desired_present_mode) -> PresentMode;
+	auto ChooseExtent(Extent2D const& desired_extent) -> Extent2D;
 	void CreateSwapchain();
 	void CreateImages();
 	void CreateSemaphores();
-	void CreateCommands();
+	void CreateCommands(u32 queueFamilyindex);
 	void Create(SwapchainInfo const& info);
 	// void ReCreate(u32 width, u32 height);
 		
@@ -816,20 +821,16 @@ void Device::WaitIdle() {
 	VB_CHECK_VK_RESULT(resource->owner->init_info.checkVkResult, result, "Failed to wait idle command buffer");
 }
 
-auto Queue::GetCommandBuffer() -> Command& {
-	return resource->command;
+auto Queue::GetInfo() const -> QueueInfo {
+	return resource->init_info;
 }
 
-auto Queue::GetFlags() const -> QueueFlags {
-	return resource->init_info.flags;
+auto Queue::GetFamilyIndex() const -> u32 {
+	return resource->familyIndex;
 }
 
-auto Queue::HasSeparateFamily() const -> bool {
-	return resource->init_info.separate_family;
-}
-
-auto Queue::SupportsPresentTo(void const* window) const -> bool {
-	return resource->init_info.supported_surface == window;
+auto Queue::GetHandle() const -> vk::Queue {
+	return resource->handle;
 }
 
 auto Device::GetQueue(QueueInfo const& info) -> Queue {
@@ -1207,7 +1208,6 @@ void PipelineResource::CreatePipelineLayout(std::span<VkDescriptorSetLayout cons
 }
 
 auto Device::CreatePipeline(PipelineInfo const& info) -> Pipeline {
-	// VB_ASSERT(info.point != PipelinePoint::eMaxEnum, "Pipeline point should be set!");
 	VB_ASSERT(info.stages.size() > 0, "Pipeline should have at least one stage!");
 	if (info.point == PipelinePoint::eGraphics &&
 			resource->init_info.pipeline_library &&
@@ -1428,29 +1428,14 @@ auto DeviceResource::PipelineLibrary::CreatePipeline(PipelineInfo const& info) -
 	};
 	PipelineLibrary::FragmentShaderInfo   fragmentShaderInfo   { pipeline.resource->layout, info.samples};
 
-	VB_VLA(Pipeline::Stage, preRasterizationStages, info.stages.size()); // todo : change this
-	VB_VLA(Pipeline::Stage, fragmentShaderStages, info.stages.size());
-	u32 preRasterizationStagesCount = 0;
-	u32 fragmentShaderStagesCount = 0;
-	for (auto& stage: info.stages) {
-		switch(stage.stage) {
-			case ShaderStage::eVertex:
-			case ShaderStage::eTessellationControl:
-			case ShaderStage::eTessellationEvaluation:
-			case ShaderStage::eGeometry:
-			case ShaderStage::eTaskEXT:
-			case ShaderStage::eMeshEXT:
-				preRasterizationStages[preRasterizationStagesCount++] = stage;
-				break;
-			case ShaderStage::eFragment:
-				fragmentShaderStages[fragmentShaderStagesCount++] = stage;
-				break;
-			default:
-			break;
-		}
-	}
-	preRasterizationInfo.stages = {preRasterizationStages.data(), preRasterizationStagesCount};
-	fragmentShaderInfo.stages = {fragmentShaderStages.data(), fragmentShaderStagesCount};
+	auto it_fragment = std::find_if(info.stages.begin(), info.stages.end(), [](Pipeline::Stage const& stage) {
+		return stage.stage == ShaderStage::eFragment;
+	});
+	VB_ASSERT(it_fragment != info.stages.begin(), "Graphics pipeline should have pre-rasterization stage");
+	VB_ASSERT(it_fragment != info.stages.end(),   "Graphics pipeline should have fragment stage");
+
+	preRasterizationInfo.stages = {info.stages.begin(), it_fragment};
+	fragmentShaderInfo.stages   = {it_fragment, info.stages.end()};
 
 	if (!preRasterizationShaders.contains(preRasterizationInfo)) {
 		CreatePreRasterizationShaders(preRasterizationInfo);
@@ -1997,45 +1982,62 @@ void Command::End() {
 	// resource->currentPipeline = {};
 }
 
-void Command::QueueSubmit(SubmitInfo const& submitInfo) {
+void Queue::Submit(
+		std::span<CommandBufferSubmitInfo const> cmds,
+		Fence fence,
+		SubmitInfo const& info) const {
 
-	VkSemaphoreSubmitInfo waitInfo {
-		.sType     = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
-		.semaphore = (VkSemaphore)submitInfo.waitSemaphore,
-		.value     = submitInfo.waitValue,
-		.stageMask = (VkPipelineStageFlags2)submitInfo.waitStages,
-	};
-	// waitInfo.value = 1; // Only for timeline semaphores
-
-	VkSemaphoreSubmitInfo signalInfo {
-		.sType     = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
-		.semaphore = (VkSemaphore)submitInfo.signalSemaphore,
-		.value     = submitInfo.signalValue,
-		.stageMask = (VkPipelineStageFlags2)submitInfo.signalStages,
-	};
-
-	VkCommandBufferSubmitInfo cmdInfo {
-		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO,
-		.commandBuffer = resource->handle,
-	};
-
-	VkSubmitInfo2 info {
+	VkSubmitInfo2 submitInfo {
 		.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2,
-		.waitSemaphoreInfoCount = static_cast<u32>(submitInfo.waitSemaphore ? 1 : 0),
-		.pWaitSemaphoreInfos = &waitInfo,
-		.commandBufferInfoCount = 1,
-		.pCommandBufferInfos = &cmdInfo,
-		.signalSemaphoreInfoCount = static_cast<u32>(submitInfo.signalSemaphore ? 1 : 0),
-		.pSignalSemaphoreInfos = &signalInfo,
+		.waitSemaphoreInfoCount = static_cast<u32>(info.waitSemaphoreInfos.size()),
+		.pWaitSemaphoreInfos = reinterpret_cast<VkSemaphoreSubmitInfo const*>(info.waitSemaphoreInfos.data()),
+		.commandBufferInfoCount = static_cast<u32>(cmds.size()),
+		.pCommandBufferInfos = reinterpret_cast<VkCommandBufferSubmitInfo const*>(cmds.data()),
+		.signalSemaphoreInfoCount = static_cast<u32>(info.signalSemaphoreInfos.size()),
+		.pSignalSemaphoreInfos = reinterpret_cast<VkSemaphoreSubmitInfo const*>(info.signalSemaphoreInfos.data()),
 	};
 
-	auto result = vkQueueSubmit2(resource->queue->handle, 1, &info, resource->fence);
-	VB_CHECK_VK_RESULT(resource->owner->owner->init_info.checkVkResult, result, "Failed to submit command buffer");
+	auto result = vkQueueSubmit2(resource->handle, 1, &submitInfo, fence);
+	VB_CHECK_VK_RESULT(resource->device->owner->init_info.checkVkResult, result, "Failed to submit command buffer");
+}
+
+void Command::QueueSubmit(Queue const& queue, SubmitInfo const& info) {
+
+	// VkCommandBufferSubmitInfo cmdInfo {
+	// 	.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO,
+	// 	.commandBuffer = GetHandle(),
+	// };
+
+	// VkSubmitInfo2 submitInfo {
+	// 	.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2,
+	// 	.waitSemaphoreInfoCount = static_cast<u32>(info.waitSemaphoreInfos.size()),
+	// 	.pWaitSemaphoreInfos = reinterpret_cast<VkSemaphoreSubmitInfo const*>(info.waitSemaphoreInfos.data()),
+	// 	.commandBufferInfoCount = 1,
+	// 	.pCommandBufferInfos = &cmdInfo,
+	// 	.signalSemaphoreInfoCount = static_cast<u32>(info.signalSemaphoreInfos.size()),
+	// 	.pSignalSemaphoreInfos = reinterpret_cast<VkSemaphoreSubmitInfo const*>(info.signalSemaphoreInfos.data()),
+	// };
+
+	// auto result = vkQueueSubmit2(info.queue.resource->handle, 1, &submitInfo, resource->fence);
+	// VB_CHECK_VK_RESULT(resource->owner->owner->init_info.checkVkResult, result, "Failed to submit command buffer");
+
+	// Commented code can be faster but DRY
+	queue.Submit(
+		{{{.commandBuffer = GetHandle()}}},
+		resource->fence, {
+			.waitSemaphoreInfos = info.waitSemaphoreInfos,
+			.signalSemaphoreInfos = info.signalSemaphoreInfos,
+		});
 }
 
 auto Command::GetHandle() const -> vk::CommandBuffer {
 	return resource->handle;
 }
+
+auto Command::GetFence() const -> Fence {
+	return resource->fence;
+}
+
 
 auto InstanceResource::CreateDebugUtilsMessenger(
 		VkDebugUtilsMessengerCreateInfoEXT const& info ) -> VkResult {
@@ -2701,6 +2703,7 @@ void DeviceResource::Create(DeviceInfo const& info) {
 	for (auto& info: queueCreateInfos) {
 		for (u32 index = 0; index < info.queueCount; ++index) {
 			queuesResources.emplace_back(QueueResource{
+				.device = this,
 				.familyIndex = info.queueFamilyIndex,
 				.index = index,
 				.init_info = {
@@ -2762,10 +2765,10 @@ void DeviceResource::Create(DeviceInfo const& info) {
 	VB_CHECK_VK_RESULT(owner->init_info.checkVkResult, result, "Failed to create imgui descriptor pool!");
 	
 	// Create command buffers
-	for (auto& q: queuesResources) {
-		q.command.resource = MakeResource<CommandResource>(this, "Command Buffer");
-		q.command.resource->Create(&q);
-	}
+	// for (auto& q: queuesResources) {
+	// 	q.command.resource = MakeResource<CommandResource>(this, "Command Buffer");
+	// 	q.command.resource->Create(&q);
+	// }
 
 	// Create staging buffer
 	staging = CreateBuffer({
@@ -2790,37 +2793,34 @@ bool SwapChainResource::SupportsFormat(VkFormat format, VkImageTiling tiling, Vk
 	return false;
 }
 
-void SwapChainResource::ChoosePresentMode() {
+auto SwapChainResource::ChoosePresentMode(PresentMode const& desired_present_mode) -> PresentMode {
 	for (auto const& mode : available_present_modes) {
-		if (mode == static_cast<VkPresentModeKHR>(init_info.present_mode)) {
-			return;
+		if (mode == static_cast<VkPresentModeKHR>(desired_present_mode)) {
+			return desired_present_mode;
 		}
 	}
 	VB_LOG_WARN("Preferred present mode not available!");
 	// FIFO is guaranteed to be available
-	init_info.present_mode = PresentMode::eFifo;
+	return PresentMode::eFifo;
 }
 
-void SwapChainResource::ChooseExtent() {
+auto SwapChainResource::ChooseExtent(Extent2D const& desired_extent) -> Extent2D {
 	if (this->surface_capabilities.currentExtent.width != UINT32_MAX) {
-		this->init_info.extent = {
+		return {
 			surface_capabilities.currentExtent.width,
 			surface_capabilities.currentExtent.height,
 		};
-	} else {
-		Extent2D actualExtent = init_info.extent;
-
-		actualExtent.width = std::max(
-			this->surface_capabilities.minImageExtent.width,
-			std::min(this->surface_capabilities.maxImageExtent.width, actualExtent.width)
-		);
-		actualExtent.height = std::max(
-			this->surface_capabilities.minImageExtent.height,
-			std::min(this->surface_capabilities.maxImageExtent.height, actualExtent.height)
-		);
-		VB_LOG_TRACE("ChooseExtent: %u, %u", actualExtent.width, actualExtent.height);
-		this->init_info.extent = actualExtent;
 	}
+	return Extent2D {
+		.width = std::max(
+			this->surface_capabilities.minImageExtent.width,
+			std::min(this->surface_capabilities.maxImageExtent.width, desired_extent.width)
+		),
+		.height = std::max(
+			this->surface_capabilities.minImageExtent.height,
+			std::min(this->surface_capabilities.maxImageExtent.height, desired_extent.height)
+		)
+	};
 }
 
 void SwapChainResource::CreateSurfaceFormats() {
@@ -2851,16 +2851,15 @@ void SwapChainResource::CreateSurfaceFormats() {
 	VB_ASSERT(suitable, "Selected device invalidated after surface update.");
 }
 
-void SwapChainResource::ChooseSurfaceFormat() {
+auto SwapChainResource::ChooseSurfaceFormat(SurfaceFormat const& desired_surface_format) -> SurfaceFormat {
 	for (auto const& availableFormat : available_surface_formats) {
-		if (availableFormat.format == VkFormat(init_info.color_format) &&
-			availableFormat.colorSpace == static_cast<VkColorSpaceKHR>(init_info.color_space)) {
-			return;
+		if (availableFormat.format == VkFormat(desired_surface_format.format) &&
+			availableFormat.colorSpace == VkColorSpaceKHR(desired_surface_format.colorSpace)) {
+			return {Format(availableFormat.format), ColorSpace(availableFormat.colorSpace)};
 		}
 	}
 	VB_LOG_WARN("Preferred surface format not available!");
-	init_info.color_format = static_cast<vk::Format>(available_surface_formats[0].format);
-	init_info.color_space = static_cast<ColorSpace>(available_surface_formats[0].colorSpace);
+	return {Format(available_surface_formats[0].format), ColorSpace(available_surface_formats[0].colorSpace)};
 }
 
 void SwapChainResource::CreateSwapchain() {
@@ -2885,7 +2884,7 @@ void SwapChainResource::CreateSwapchain() {
 		.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
 		.surface = init_info.surface,
 		.minImageCount = image_count,
-		.imageFormat = VkFormat(init_info.color_format),
+		.imageFormat = VkFormat(init_info.preferred_format),
 		.imageColorSpace = static_cast<VkColorSpaceKHR>(init_info.color_space),
 		.imageExtent = {init_info.extent.width, init_info.extent.height},
 		.imageArrayLayers = 1,
@@ -2929,7 +2928,7 @@ void SwapChainResource::CreateImages() {
 			.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
 			.image = vk_image,
 			.viewType = VK_IMAGE_VIEW_TYPE_2D,
-			.format = VkFormat(init_info.color_format),
+			.format = VkFormat(init_info.preferred_format),
 			.subresourceRange {
 				.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
 				.baseMipLevel = 0,
@@ -2977,24 +2976,31 @@ void SwapChainResource::CreateSemaphores() {
 	}
 }
 
-void SwapChainResource::CreateCommands() {
+void SwapChainResource::CreateCommands(u32 queueFamilyindex) {
 	commands.resize(init_info.frames_in_flight);
 	for (auto& cmd: commands) {
 		cmd.resource = MakeResource<CommandResource>(owner, "Swapchain Command Buffer");
-		cmd.resource->Create(init_info.queue.resource);
+		cmd.resource->Create(queueFamilyindex);
 	}
 }
 
 void SwapChainResource::Create(SwapchainInfo const& info) {
-	init_info = info;
+	// this is a necessary hackery
+	init_info.~SwapchainInfo();
+	new(&init_info) SwapchainInfo(info);
 	CreateSurfaceFormats();
-	ChooseSurfaceFormat();
-	ChoosePresentMode();
-	ChooseExtent();
+	auto [format, colorSpace] = ChooseSurfaceFormat({
+		init_info.preferred_format,
+		init_info.color_space
+	});
+	init_info.preferred_format = format;
+	init_info.color_space = colorSpace;
+	init_info.present_mode = ChoosePresentMode(init_info.present_mode);
+	extent = ChooseExtent(init_info.extent);
 	CreateSwapchain();
 	CreateImages();
 	CreateSemaphores();
-	CreateCommands();
+	CreateCommands(info.queueFamilyindex);
 	current_frame = 0;
 	current_image_index = 0;
 	dirty = false;
@@ -3042,11 +3048,15 @@ void Swapchain::Recreate(u32 width, u32 height) {
 		vkDestroyImageView(resource->owner->handle, image.resource->view, resource->owner->owner->allocator);
 	}
 	resource->images.clear();
-	resource->init_info.extent = {width, height};
 	resource->CreateSurfaceFormats();
-	resource->ChooseSurfaceFormat();
-	resource->ChoosePresentMode();
-	resource->ChooseExtent();
+	resource->extent = resource->ChooseExtent({width, height});
+	auto [format, colorSpace] = resource->ChooseSurfaceFormat({
+		resource->init_info.preferred_format, 
+		resource->init_info.color_space
+	});
+	resource->init_info.preferred_format = format;
+	resource->init_info.color_space = colorSpace;
+	resource->init_info.present_mode = resource->ChoosePresentMode(resource->init_info.present_mode);
 	resource->CreateSwapchain();
 	resource->CreateImages();
 }
@@ -3078,7 +3088,7 @@ bool Swapchain::AcquireImage() {
 }
 
 auto Swapchain::GetFormat() -> Format {
-	return resource->init_info.color_format;
+	return resource->init_info.preferred_format;
 }
 
 bool Swapchain::GetDirty() {
@@ -3093,29 +3103,29 @@ auto Swapchain::GetCommandBuffer() -> Command& {
 	return resource->commands[resource->current_frame];
 }
 // EndCommandBuffer + vkQueuePresentKHR
-void Swapchain::SubmitAndPresent() {
+void Swapchain::SubmitAndPresent(Queue const& submit, Queue const& present) {
 	auto& currentFrame = resource->current_frame;
 	auto& currentImageIndex = resource->current_image_index;
+	auto& cmd = GetCommandBuffer();
 
-	SubmitInfo submitInfo{};
-	submitInfo.waitSemaphore   = reinterpret_cast<Semaphore*>(resource->GetImageAvailableSemaphore(currentFrame));
-	submitInfo.signalSemaphore = reinterpret_cast<Semaphore*>(resource->GetRenderFinishedSemaphore(currentFrame));
-
-	auto cmd = GetCommandBuffer();
 	cmd.End();
-	cmd.QueueSubmit(submitInfo);
+	cmd.QueueSubmit( submit, {
+		.waitSemaphoreInfos   = {{{.semaphore = Semaphore(resource->GetImageAvailableSemaphore(currentFrame))}}},
+		.signalSemaphoreInfos = {{{.semaphore = Semaphore(resource->GetRenderFinishedSemaphore(currentFrame))}}}
+	});
 
+	VkSemaphore present_wait = resource->GetRenderFinishedSemaphore(currentFrame);
 	VkPresentInfoKHR presentInfo{
 		.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
 		.waitSemaphoreCount = 1, // TODO(nm): pass with info
-		.pWaitSemaphores = reinterpret_cast<VkSemaphore*>(&submitInfo.signalSemaphore),
+		.pWaitSemaphores = &present_wait,
 		.swapchainCount = 1,
 		.pSwapchains = &resource->handle,
 		.pImageIndices = &currentImageIndex,
 		.pResults = nullptr,
 	};
 
-	auto result = vkQueuePresentKHR(cmd.resource->queue->handle, &presentInfo); // TODO(nm): use present queue
+	auto result = vkQueuePresentKHR(present.resource->handle, &presentInfo); // TODO(nm): use present queue
 
 	switch (result) {
 	case VK_SUCCESS: break;
@@ -3147,6 +3157,14 @@ auto Device::CreateDescriptor(std::span<BindingInfo const> bindings) -> Descript
 	descriptor.resource->Create(bindings);
 	return descriptor;
 }
+
+auto Device::CreateCommand(u32 queueFamilyindex) -> Command {
+	Command command;
+	command.resource = MakeResource<CommandResource>(resource.get(), "Command Buffer");
+	command.resource->Create(queueFamilyindex);
+	return command;
+}
+
 
 void DescriptorResource::Create(std::span<BindingInfo const> binding_infos) {
 	std::set<u32> specified_bindings;
@@ -3180,7 +3198,8 @@ void DescriptorResource::Create(std::span<BindingInfo const> binding_infos) {
 	}
 	// fill with reversed indices so that 0 is at the back
 	for (auto const& binding : binding_infos) {
-		auto& vec = bindings[binding.type].resourceIDs;
+		auto it = bindings.find(binding.type);
+		auto& vec = it->second.resourceIDs;
 		vec.resize(binding.count);
 		std::iota(vec.rbegin(), vec.rend(), 0);
 	}
@@ -3269,15 +3288,14 @@ auto DescriptorResource::CreateDescriptorSets() -> VkDescriptorSet {
 }
 
 
-void CommandResource::Create(QueueResource* queue) {
-	this->queue = queue;
-	VkCommandPoolCreateInfo poolInfo{
+void CommandResource::Create(u32 queueFamilyindex) {
+	VkCommandPoolCreateInfo poolInfo {
 		.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
 		.flags = 0, // do not use VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT
-		.queueFamilyIndex = this->queue->familyIndex
+		.queueFamilyIndex = queueFamilyindex
 	};
 
-	VkCommandBufferAllocateInfo allocInfo{
+	VkCommandBufferAllocateInfo allocInfo {
 		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
 		.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
 		.commandBufferCount = 1,
@@ -3294,6 +3312,7 @@ void CommandResource::Create(QueueResource* queue) {
 		.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
 		.flags = VK_FENCE_CREATE_SIGNALED_BIT,
 	};
+
 	result = vkCreateFence(owner->handle, &fenceInfo, owner->owner->allocator, &fence);
 	VB_CHECK_VK_RESULT(owner->owner->init_info.checkVkResult, result, "Failed to create fence!");
 }
@@ -3610,8 +3629,6 @@ auto SwapChainResource::GetImGuiInfo() -> ImGuiInitInfo {
 		.Instance            = owner->owner->handle,
 		.PhysicalDevice      = owner->physicalDevice->handle,
 		.Device              = owner->handle,
-		.QueueFamily         = commands[0].resource->queue->familyIndex,
-		.Queue               = commands[0].resource->queue->handle,
 		.DescriptorPool      = owner->imguiDescriptorPool,
 		.MinImageCount       = std::max(surface_capabilities.minImageCount, 2u),
 		.ImageCount          = (u32)images.size(),
