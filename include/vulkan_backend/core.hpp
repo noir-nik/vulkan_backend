@@ -433,7 +433,6 @@ struct ImGuiInitInfo
 	const vk::AllocationCallbacks*    Allocator;
 };
 
-
 class Swapchain {
 public:
 	auto GetImGuiInfo() -> ImGuiInitInfo;

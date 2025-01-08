@@ -674,10 +674,10 @@ struct CommandResource : ResourceBase<DeviceResource> {
 };
 
 struct SwapChainResource: ResourceBase<DeviceResource> {
-	VkSwapchainKHR  handle  = VK_NULL_HANDLE;
-	VkSurfaceCapabilitiesKHR surface_capabilities;
-	std::vector<VkSemaphore> image_available_semaphores;
-	std::vector<VkSemaphore> render_finished_semaphores;
+	VkSwapchainKHR                  handle  = VK_NULL_HANDLE;
+	VkSurfaceCapabilitiesKHR        surface_capabilities;
+	std::vector<VkSemaphore>        image_available_semaphores;
+	std::vector<VkSemaphore>        render_finished_semaphores;
 	std::vector<VkPresentModeKHR>   available_present_modes;
 	std::vector<VkSurfaceFormatKHR> available_surface_formats;
 
@@ -689,14 +689,16 @@ struct SwapChainResource: ResourceBase<DeviceResource> {
 	bool dirty = true;
 
 	SwapchainInfo init_info = {{}, {}, {}};
+	
+	Surface surface;
 	Extent2D extent;
 
 	auto GetImGuiInfo() -> ImGuiInitInfo;
 
-	inline auto GetImageAvailableSemaphore(u32 current_frame) -> VkSemaphore {
+	inline auto GetImageAvailableSemaphore() -> VkSemaphore {
 		return image_available_semaphores[current_frame];
 	}
-	inline auto GetRenderFinishedSemaphore(u32 current_frame) -> VkSemaphore {
+	inline auto GetRenderFinishedSemaphore() -> VkSemaphore {
 		return render_finished_semaphores[current_frame];
 	}
 	auto SupportsFormat(VkFormat format, VkImageTiling tiling, VkFormatFeatureFlags features) -> bool;
@@ -2825,24 +2827,24 @@ auto SwapChainResource::ChooseExtent(Extent2D const& desired_extent) -> Extent2D
 
 void SwapChainResource::CreateSurfaceFormats() {
 	// get capabilities
-	vkGetPhysicalDeviceSurfaceCapabilitiesKHR(owner->physicalDevice->handle, init_info.surface, &surface_capabilities);
+	vkGetPhysicalDeviceSurfaceCapabilitiesKHR(owner->physicalDevice->handle, surface, &surface_capabilities);
 
 	// get surface formats
 	u32 formatCount;
-	vkGetPhysicalDeviceSurfaceFormatsKHR(owner->physicalDevice->handle, init_info.surface, &formatCount, nullptr);
+	vkGetPhysicalDeviceSurfaceFormatsKHR(owner->physicalDevice->handle, surface, &formatCount, nullptr);
 	if (formatCount != 0) {
 		available_surface_formats.clear();
 		available_surface_formats.resize(formatCount);
-		vkGetPhysicalDeviceSurfaceFormatsKHR(owner->physicalDevice->handle, init_info.surface, &formatCount, available_surface_formats.data());
+		vkGetPhysicalDeviceSurfaceFormatsKHR(owner->physicalDevice->handle, surface, &formatCount, available_surface_formats.data());
 	}
 
 	// get present modes
 	u32 modeCount;
-	vkGetPhysicalDeviceSurfacePresentModesKHR(owner->physicalDevice->handle, init_info.surface, &modeCount, nullptr);
+	vkGetPhysicalDeviceSurfacePresentModesKHR(owner->physicalDevice->handle, surface, &modeCount, nullptr);
 	if (modeCount != 0) {
 		available_present_modes.clear();
 		available_present_modes.resize(modeCount);
-		vkGetPhysicalDeviceSurfacePresentModesKHR(owner->physicalDevice->handle, init_info.surface, &modeCount, available_present_modes.data());
+		vkGetPhysicalDeviceSurfacePresentModesKHR(owner->physicalDevice->handle, surface, &modeCount, available_present_modes.data());
 	}
 
 	// set this device as not suitable if no surface formats or present modes available
@@ -2882,11 +2884,11 @@ void SwapChainResource::CreateSwapchain() {
 	// Create swapchain
 	VkSwapchainCreateInfoKHR createInfo {
 		.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
-		.surface = init_info.surface,
+		.surface = surface,
 		.minImageCount = image_count,
 		.imageFormat = VkFormat(init_info.preferred_format),
 		.imageColorSpace = static_cast<VkColorSpaceKHR>(init_info.color_space),
-		.imageExtent = {init_info.extent.width, init_info.extent.height},
+		.imageExtent = {extent.width, extent.height},
 		.imageArrayLayers = 1,
 		.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT  // if we want to render to a separate image first to perform post-processing
 						| VK_IMAGE_USAGE_TRANSFER_DST_BIT, // we should add this image usage
@@ -2988,6 +2990,7 @@ void SwapChainResource::Create(SwapchainInfo const& info) {
 	// this is a necessary hackery
 	init_info.~SwapchainInfo();
 	new(&init_info) SwapchainInfo(info);
+	surface = info.surface;
 	CreateSurfaceFormats();
 	auto [format, colorSpace] = ChooseSurfaceFormat({
 		init_info.preferred_format,
@@ -3027,12 +3030,12 @@ void SwapChainResource::Free() {
 	render_finished_semaphores.clear();
 	available_present_modes.clear();
 	available_surface_formats.clear();
-
+ 
 
 	vkDestroySwapchainKHR(owner->handle, handle, owner->owner->allocator);
 
 	if (init_info.destroy_surface) {
-		vkDestroySurfaceKHR(owner->owner->handle, init_info.surface, owner->owner->allocator);
+		vkDestroySurfaceKHR(owner->owner->handle, surface, owner->owner->allocator);
 	}
 
 	handle = VK_NULL_HANDLE;
@@ -3066,7 +3069,7 @@ bool Swapchain::AcquireImage() {
 		resource->owner->handle,
 		resource->handle,
 		UINT64_MAX,
-		resource->GetImageAvailableSemaphore(resource->current_frame),
+		resource->GetImageAvailableSemaphore(),
 		VK_NULL_HANDLE,
 		&resource->current_image_index
 	);
@@ -3104,28 +3107,27 @@ auto Swapchain::GetCommandBuffer() -> Command& {
 }
 // EndCommandBuffer + vkQueuePresentKHR
 void Swapchain::SubmitAndPresent(Queue const& submit, Queue const& present) {
-	auto& currentFrame = resource->current_frame;
-	auto& currentImageIndex = resource->current_image_index;
+	auto& current_image_index = resource->current_image_index;
 	auto& cmd = GetCommandBuffer();
 
 	cmd.End();
 	cmd.QueueSubmit( submit, {
-		.waitSemaphoreInfos   = {{{.semaphore = Semaphore(resource->GetImageAvailableSemaphore(currentFrame))}}},
-		.signalSemaphoreInfos = {{{.semaphore = Semaphore(resource->GetRenderFinishedSemaphore(currentFrame))}}}
+		.waitSemaphoreInfos   = {{{.semaphore = Semaphore(resource->GetImageAvailableSemaphore())}}},
+		.signalSemaphoreInfos = {{{.semaphore = Semaphore(resource->GetRenderFinishedSemaphore())}}}
 	});
 
-	VkSemaphore present_wait = resource->GetRenderFinishedSemaphore(currentFrame);
+	VkSemaphore present_wait = resource->GetRenderFinishedSemaphore();
 	VkPresentInfoKHR presentInfo{
 		.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
 		.waitSemaphoreCount = 1, // TODO(nm): pass with info
 		.pWaitSemaphores = &present_wait,
 		.swapchainCount = 1,
 		.pSwapchains = &resource->handle,
-		.pImageIndices = &currentImageIndex,
+		.pImageIndices = &current_image_index,
 		.pResults = nullptr,
 	};
 
-	auto result = vkQueuePresentKHR(present.resource->handle, &presentInfo); // TODO(nm): use present queue
+	auto result = vkQueuePresentKHR(present.resource->handle, &presentInfo);
 
 	switch (result) {
 	case VK_SUCCESS: break;
@@ -3139,7 +3141,7 @@ void Swapchain::SubmitAndPresent(Queue const& submit, Queue const& present) {
 		break;
 	}
 
-	currentFrame = (currentFrame + 1) % resource->init_info.frames_in_flight;
+	resource->current_frame = (resource->current_frame + 1) % resource->init_info.frames_in_flight;
 
 }
 

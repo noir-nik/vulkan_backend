@@ -26,8 +26,7 @@
 #else
 #define VB_CHECK_VK_RESULT(func, result, message) \
 	if (func) \
-	func(result, message); \
-
+		func(result, message);
 #endif
 
 #ifdef VB_UNSAFE_CAST
