@@ -18,8 +18,11 @@ import std;
 import vulkan_hpp;
 #endif
 
+#ifdef VB_DEV
+#undef VB_DEV
+#endif
+
 #define VB_EXPORT export
-#define _VB_INCLUDE_IN_MODULE
 extern "C++" {
 #if defined(__clang__)
 #pragma clang diagnostic push

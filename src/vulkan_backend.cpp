@@ -41,637 +41,15 @@ import vk_mem_alloc;
 
 namespace VB_NAMESPACE {
 
-u32 constexpr NullRID = ~0;
 
 LogLevel global_log_level = LogLevel::Trace;
 
-namespace {
-	static inline auto HashCombine(size_t hash, size_t x) -> size_t {
-	x = ((x >> 16) ^ x) * 0x45d9f3b;
-	x = ((x >> 16) ^ x) * 0x45d9f3b;
-	x = (x >> 16) ^ x;
-	return hash ^ x + 0x9e3779b9 + (hash << 6) + (hash >> 2);
-};
-} // Util
 
-static inline auto operator==(Pipeline::Stage const& lhs, Pipeline::Stage const& rhs) -> bool {
-	return lhs.stage == rhs.stage && lhs.source.data == rhs.source.data &&
-		lhs.entry_point == rhs.entry_point && lhs.compile_options == rhs.compile_options;
-}
 
-struct NoCopy {
-	NoCopy() = default;
-	NoCopy(const NoCopy&) = delete;
-	NoCopy& operator=(const NoCopy&) = delete;
-	NoCopy(NoCopy&&) = default;
-	NoCopy& operator=(NoCopy&&) = default;
-	~NoCopy() = default;
-};
 
-struct NoCopyNoMove {
-	NoCopyNoMove() = default;
-	NoCopyNoMove(const NoCopyNoMove&) = delete;
-	NoCopyNoMove& operator=(const NoCopyNoMove&) = delete;
-	NoCopyNoMove(NoCopyNoMove&&) = delete;
-	NoCopyNoMove& operator=(NoCopyNoMove&&) = delete;
-	~NoCopyNoMove() = default;
-};
 
-template <typename Owner>
-class ResourceBase : NoCopyNoMove {
-public:
-	Owner* owner;
-	std::string name;
-	ResourceBase(Owner* owner, std::string_view const name = "") : owner(owner), name(name) {}
-	virtual ~ResourceBase() = default;
-	virtual void Free() = 0;
-	virtual auto GetType() -> char const* = 0;
-	auto GetName() -> char const* {return name.data();};
-};
 
-template <typename Owner>
-struct ResourceDeleter {
-	std::weak_ptr<Owner> weak_owner;
 
-	void operator()(ResourceBase<Owner>* ptr) {
-		if (auto owner = weak_owner.lock()) {
-			ptr->Free();
-			owner->resources.erase(ptr);
-		}
-		delete ptr;
-	}
-};
-
-// We could use std::allocate_shared to avoid double allocation in std::shared_ptr
-// constructor but in that case control block would be in same allocation with Resource
-// and memomy would not be freed upon destruction if a single weak_ptr exists
-template<typename Res, typename Owner>
-requires std::is_base_of_v<std::enable_shared_from_this<Owner>, Owner> && (!std::same_as<Res, Owner>)
-auto MakeResource(Owner* owner_ptr, std::string_view const name = "") -> std::shared_ptr<Res> {
-	// Create a new resource with custom deleter
-	auto res =  std::shared_ptr<Res>(
-		new Res(owner_ptr, name),
-		ResourceDeleter{owner_ptr->weak_from_this()}
-	);
-	// Log verbose
-	VB_LOG_TRACE("[ MakeResource ] type = %s, name = \"%s\", no. = %zu owner = \"%s\"",
-		res->GetType(), name.data(), owner_ptr->resources.size(), owner_ptr->GetName());
-
-	// Add to owners set of resources
-	auto [_, success] = owner_ptr->resources.emplace(res.get());
-	VB_ASSERT(success, "Resource already exists!"); // This should never happen
-	return res;
-};
-
-struct PhysicalDeviceResource : NoCopy {
-	InstanceResource* instance = nullptr;
-	VkPhysicalDevice handle = VK_NULL_HANDLE;
-
-	// Features
-	VkPhysicalDeviceDynamicRenderingUnusedAttachmentsFeaturesEXT unusedAttachmentFeatures;
-	VkPhysicalDeviceGraphicsPipelineLibraryFeaturesEXT graphicsPipelineLibraryFeatures;
-	VkPhysicalDeviceBufferDeviceAddressFeatures bufferDeviceAddressFeatures;
-	VkPhysicalDeviceSynchronization2FeaturesKHR synchronization2Features;
-	VkPhysicalDeviceDynamicRenderingFeatures dynamicRenderingFeatures;
-	VkPhysicalDeviceDescriptorIndexingFeatures indexingFeatures;
-	VkPhysicalDeviceFeatures2 physicalFeatures2;
-
-	// Properties
-	VkPhysicalDeviceGraphicsPipelineLibraryPropertiesEXT graphicsPipelineLibraryProperties;
-	VkPhysicalDeviceProperties2 physicalProperties2;
-	VkPhysicalDeviceMemoryProperties memoryProperties;
-
-	// Extensions
-	std::vector<VkExtensionProperties> availableExtensions;
-
-	// Families
-	std::vector<VkQueueFamilyProperties> availableFamilies;
-
-	// Max samples
-	SampleCount maxSamples = SampleCount::e1;
-
-	// desiredFlags: required queue flags (strict)
-	// undesiredFlags: undesired queue flags (strict)
-	// avoidIfPossible: vector of pairs (flags, priority to avoid)
-	// surfaceToSupport: surface to support (strict)
-	// numTakenQueues: numbers of already taken queues in families (optional)
-	// this is rather complicated, but necessary
-	struct QueueFamilyIndexRequest {
-		struct AvoidInfo{
-			VkQueueFlags flags;
-			float penalty;
-		};
-		VkQueueFlags desiredFlags;
-		VkQueueFlags undesiredFlags;
-		std::span<AvoidInfo const> avoidIfPossible = {};
-		VkSurfaceKHR surfaceToSupport = VK_NULL_HANDLE;
-		std::span<u32 const> numTakenQueues = {};
-	};
-	
-	u32 static constexpr QUEUE_NOT_FOUND = ~0u;
-	u32 static constexpr ALL_SUITABLE_QUEUES_TAKEN = ~1u;
-
-	// @return best fitting queue family index or error code if strict requirements not met
-	auto GetQueueFamilyIndex(QueueFamilyIndexRequest const& request) -> u32;
-	void GetDetails();
-	auto FilterSupported(std::span<char const*> extensions) -> std::vector<std::string_view>;
-	auto SupportsExtensions(std::span<char const*> extensions) -> bool;
-	PhysicalDeviceResource(InstanceResource* instance, VkPhysicalDevice handle = VK_NULL_HANDLE)
-		: instance(instance), handle(handle) {};
-};
-
-struct InstanceResource: NoCopyNoMove, std::enable_shared_from_this<InstanceResource> {
-	VkInstance handle = VK_NULL_HANDLE;
-	VkAllocationCallbacks* allocator = VK_NULL_HANDLE;
-	VkDebugUtilsMessengerEXT debugMessenger = VK_NULL_HANDLE;
-	VkDebugReportCallbackEXT debugReport = VK_NULL_HANDLE;
-	char const* applicationName = "Vulkan";
-	char const* engineName = "Engine";
-
-	u32 apiVersion;
-
-	std::vector<bool>              activeLayers; // Available layers
-	std::vector<char const*>       activeLayersNames;
-	std::vector<VkLayerProperties> layers;
-
-	std::vector<bool>                  activeExtensions;     // Instance Extensions
-	std::vector<char const*>           activeExtensionsNames; // Instance Extensions
-	std::vector<VkExtensionProperties> extensions;   // Instance Extensions
-
-	std::vector<char const*> requiredInstanceExtensions {
-		VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME,
-	};
-
-	std::vector<PhysicalDeviceResource> physicalDevices;
-
-	std::set<ResourceBase<InstanceResource>*> resources;
-
-	InstanceInfo init_info;
-
-	void Create(InstanceInfo const& info);
-	void GetPhysicalDevices();
-
-	auto CreateDebugUtilsMessenger(VkDebugUtilsMessengerCreateInfoEXT const& info) -> VkResult;
-	auto CreateDebugReportCallback(VkDebugReportCallbackCreateInfoEXT const& info) -> VkResult;
-
-	void DestroyDebugUtilsMessenger();
-	void DestroyDebugReportCallback();
-
-	auto GetName() -> char const* { 
-		return "instance";
-	}
-
-	auto GetType() -> char const* { 
-		return "InstanceResource";
-	}
-
-	void Free() {
-		activeExtensionsNames.clear();
-		activeLayersNames.clear();
-		physicalDevices.clear();
-		VB_LOG_TRACE("[ Free ] Destroying instance...");
-		VB_LOG_TRACE("[ Free ] Cleaning up %zu instance resources...", resources.size());
-
-		std::erase_if(resources, [](ResourceBase<InstanceResource>* const res) {
-			res->Free();
-			return true;
-		});
-
-		if (debugMessenger) {
-			DestroyDebugUtilsMessenger();
-			VB_LOG_TRACE("[ Free ] Destroyed debug messenger.");
-			debugMessenger = nullptr;
-		}
-		if (debugReport) {
-			DestroyDebugReportCallback();
-			VB_LOG_TRACE("[ Free ] Destroyed debug report callback.");
-			debugReport = nullptr;
-		}
-
-		vkDestroyInstance(handle, allocator);
-		VB_LOG_TRACE("[ Free ] Destroyed instance.");
-	}
-
-	~InstanceResource() {
-		Free();
-	}
-};
-
-struct QueueResource : NoCopy {
-	DeviceResource* device = nullptr;
-	u32 familyIndex = ~0;
-	u32 index = 0;
-	QueueInfo init_info;
-	VkQueue handle = VK_NULL_HANDLE;
-};
-
-struct DeviceResource : ResourceBase<InstanceResource>, std::enable_shared_from_this<DeviceResource> {
-	VkDevice         handle              = VK_NULL_HANDLE;
-	VkDescriptorPool imguiDescriptorPool = VK_NULL_HANDLE;
-	VkPipelineCache  pipelineCache       = VK_NULL_HANDLE;
-
-	PhysicalDeviceResource* physicalDevice = nullptr;
-
-	Descriptor descriptor = {};
-
-	// All user-created resources owned by handle classes with
-	// std::shared_ptr<...Resource> resource member
-	std::set<ResourceBase<DeviceResource>*> resources;
-
-	// Created with device and not changed
-	std::vector<QueueResource> queuesResources;
-	std::vector<Queue>         queues;
-	DeviceInfo                 init_info;
-
-	VmaAllocator vmaAllocator;
-
-	struct SamplerHash {
-		auto operator()(SamplerInfo const& desc) const -> size_t {
-			size_t hash = 0;
-			hash = HashCombine(hash, static_cast<size_t>(desc.magFilter));
-			hash = HashCombine(hash, static_cast<size_t>(desc.minFilter));
-			hash = HashCombine(hash, static_cast<size_t>(desc.mipmapMode));
-			hash = HashCombine(hash, static_cast<size_t>(desc.wrapU));
-			hash = HashCombine(hash, static_cast<size_t>(desc.wrapV));
-			hash = HashCombine(hash, static_cast<size_t>(desc.wrapW));
-			hash = HashCombine(hash, std::hash<float>()(desc.mipLodBias));
-			hash = HashCombine(hash, std::hash<bool>()(desc.anisotropyEnable));
-			hash = HashCombine(hash, std::hash<float>()(desc.maxAnisotropy));
-			hash = HashCombine(hash, std::hash<bool>()(desc.compareEnable));
-			hash = HashCombine(hash, static_cast<size_t>(desc.compareOp));
-			hash = HashCombine(hash, std::hash<float>()(desc.minLod));
-			hash = HashCombine(hash, std::hash<float>()(desc.maxLod));
-			hash = HashCombine(hash, static_cast<size_t>(desc.borderColor));
-			hash = HashCombine(hash, std::hash<bool>()(desc.unnormalizedCoordinates));
-			return hash;
-		}
-
-		auto operator()(SamplerInfo const& lhs, SamplerInfo const& rhs) const -> bool {
-			return std::memcmp(&lhs, &rhs, sizeof(SamplerInfo)) == 0;
-		}
-	};
-
-	std::unordered_map<SamplerInfo, VkSampler, SamplerHash, SamplerHash> samplers;
-
-	struct PipelineLibrary {
-		struct VertexInputInfo {
-			std::span<vk::Format const> vertexAttributes;
-			bool lineTopology = false;
-		};
-
-		struct PreRasterizationInfo {
-			VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
-			bool lineTopology = false;
-			CullModeFlags cullMode = CullMode::eNone;
-			std::span<Pipeline::Stage const> stages;
-		};
-
-		struct FragmentShaderInfo {
-			VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
-			SampleCount samples;
-			std::span<Pipeline::Stage const> stages;
-		};
-
-		struct FragmentOutputInfo {
-			VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
-			std::span<vk::Format const> colorFormats;
-			bool useDepth;
-			vk::Format depthFormat;
-			SampleCount samples;
-		};
-
-		static inline auto FormatSpanHash(std::span<vk::Format const> formats) -> size_t {
-			size_t hash = 0;
-			for (vk::Format format: formats) {
-				hash = HashCombine(hash, static_cast<size_t>(format));
-			}
-			return hash;
-		}
-		
-		static inline auto StageHash(Pipeline::Stage const& stage) -> size_t {
-			size_t hash = 0;
-			hash = HashCombine(hash, static_cast<size_t>(stage.stage));
-			hash = HashCombine(hash, std::hash<std::string_view>{}(stage.source.data));
-			hash = HashCombine(hash, std::hash<std::string_view>{}(stage.entry_point));
-			hash = HashCombine(hash, std::hash<std::string_view>{}(stage.compile_options));
-			return hash;
-		}
-
-		struct VertexInputHash {
-			auto operator()(VertexInputInfo const& info) const -> size_t {
-				return HashCombine(FormatSpanHash(info.vertexAttributes), info.lineTopology);
-			}
-
-			auto operator()(VertexInputInfo const& a, VertexInputInfo const& b) const -> bool {
-				auto span_compare = [](auto const& a, auto const& b) -> bool {
-					return a.size() == b.size() && std::equal(a.begin(), a.end(), b.begin());
-				};
-				return span_compare(a.vertexAttributes, b.vertexAttributes) && a.lineTopology == b.lineTopology;
-			}
-		};
-
-		struct PreRasterizationHash {
-			auto operator()(PreRasterizationInfo const& info) const -> size_t {
-				size_t seed = 0;
-				for (Pipeline::Stage const& stage: info.stages) {
-					seed = HashCombine(seed, StageHash(stage));
-				}
-				seed = HashCombine(seed, info.lineTopology);
-				seed = HashCombine(seed, CullModeFlags::MaskType(info.cullMode));
-				return seed;
-			}
-
-			auto operator()(PreRasterizationInfo const& a, PreRasterizationInfo const& b) const -> bool {
-				return a.stages.size() == b.stages.size() &&
-					std::equal(a.stages.begin(), a.stages.end(), b.stages.begin()) && 
-					a.lineTopology == b.lineTopology && a.cullMode == b.cullMode;
-			}
-		};
-
-		struct FragmentOutputHash {
-			auto operator()(FragmentOutputInfo const& info) const -> size_t {
-				size_t hash = HashCombine(FormatSpanHash(info.colorFormats), reinterpret_cast<size_t>(info.pipelineLayout));
-				hash = HashCombine(hash, info.useDepth);
-				hash = HashCombine(hash, static_cast<size_t>(info.depthFormat));
-				hash = HashCombine(hash, static_cast<size_t>(info.samples));
-				return hash;
-			}
-
-			auto operator()(FragmentOutputInfo const& a, FragmentOutputInfo const& b) const -> bool {
-				return std::equal(a.colorFormats.begin(), a.colorFormats.end(), b.colorFormats.begin()) && 
-					a.pipelineLayout == b.pipelineLayout && 
-					a.useDepth == b.useDepth && 
-					a.depthFormat == b.depthFormat && 
-					a.samples == b.samples;
-			}
-		};
-
-		struct FragmentShaderHash {
-			auto operator()(FragmentShaderInfo const& info) const -> size_t {
-				size_t hash = 0;
-				for (auto const& stage: info.stages) {
-					hash = HashCombine(hash, StageHash(stage));
-				}
-				hash = HashCombine(hash, reinterpret_cast<size_t>(info.pipelineLayout));
-				hash = HashCombine(hash, static_cast<size_t>(info.samples));
-				return hash;
-			}
-			auto operator()(FragmentShaderInfo const& a, FragmentShaderInfo const& b) const -> bool {
-				return a.stages.size() == b.stages.size() && 
-					std::equal(a.stages.begin(), a.stages.end(), b.stages.begin()) && 
-					a.pipelineLayout == b.pipelineLayout && 
-					a.samples == b.samples;
-			}
-		};
-
-		DeviceResource* device = nullptr;
-		std::unordered_map<VertexInputInfo, VkPipeline,VertexInputHash, VertexInputHash> vertexInputInterfaces;
-		std::unordered_map<PreRasterizationInfo, VkPipeline, PreRasterizationHash, PreRasterizationHash> preRasterizationShaders;
-		std::unordered_map<FragmentOutputInfo, VkPipeline, FragmentOutputHash, FragmentOutputHash> fragmentOutputInterfaces;
-		std::unordered_map<FragmentShaderInfo, VkPipeline, FragmentShaderHash, FragmentShaderHash> fragmentShaders;
-
-		Pipeline CreatePipeline(PipelineInfo const& desc);
-	private:
-		void CreateVertexInputInterface(VertexInputInfo const& info);
-		void CreatePreRasterizationShaders(PreRasterizationInfo const& info);
-		void CreateFragmentShader(FragmentShaderInfo const& info);
-		void CreateFragmentOutputInterface(FragmentOutputInfo const& info);
-		auto LinkPipeline(std::array<VkPipeline, 4> const& pipelines, VkPipelineLayout layout) -> VkPipeline;
-
-	} pipelineLibrary;
-
-	u8* stagingCpu = nullptr;
-	u32 stagingOffset = 0;
-	Buffer staging;
-	
-	std::vector<char const*> requiredExtensions = { // Physical Device Extensions
-		// VK_KHR_SWAPCHAIN_EXTENSION_NAME,
-		// VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME,
-		// VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME,
-		// VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME,
-		// VK_KHR_RAY_QUERY_EXTENSION_NAME,
-		// VK_EXT_SHADER_ATOMIC_FLOAT_EXTENSION_NAME,
-	};
-
-	void Create(DeviceInfo const& info);
-
-	auto CreateBuffer(BufferInfo const& info) -> Buffer;
-	auto CreateImage(ImageInfo const& info)   -> Image;
-	auto CreatePipeline(PipelineInfo const& info)         -> Pipeline;
-	auto CreateSampler(SamplerInfo const& info)           -> VkSampler;
-	auto GetOrCreateSampler(SamplerInfo const& info = {}) -> VkSampler;
-
-	void SetDebugUtilsObjectName(VkDebugUtilsObjectNameInfoEXT const& pNameInfo);
-
-	PFN_vkSetDebugUtilsObjectNameEXT vkSetDebugUtilsObjectNameEXT = nullptr;
-	// PFN_vkGetAccelerationStructureBuildSizesKHR vkGetAccelerationStructureBuildSizesKHR;
-	// PFN_vkCreateAccelerationStructureKHR vkCreateAccelerationStructureKHR;
-	// PFN_vkGetBufferDeviceAddressKHR vkGetBufferDeviceAddressKHR;
-	// PFN_vkCmdBuildAccelerationStructuresKHR vkCmdBuildAccelerationStructuresKHR;
-	// PFN_vkGetAccelerationStructureDeviceAddressKHR vkGetAccelerationStructureDeviceAddressKHR;
-	// PFN_vkDestroyAccelerationStructureKHR vkDestroyAccelerationStructureKHR;
-
-	using ResourceBase::ResourceBase;
-
-	auto GetName() -> char const* { 
-		return physicalDevice->physicalProperties2.properties.deviceName;
-	}
-
-	auto GetType() -> char const* override { 
-		return "DeviceResource";
-	}
-
-	void Free() override {
-		VB_LOG_TRACE("[ Free ] type = %s, name = %s", GetType(), GetName());
-		vkDeviceWaitIdle(handle);
-
-		if (imguiDescriptorPool != VK_NULL_HANDLE) {
-			vkDestroyDescriptorPool(handle, imguiDescriptorPool, owner->allocator);
-		}
-
-		for (auto& [_, pipeline]: pipelineLibrary.vertexInputInterfaces) {
-			vkDestroyPipeline(handle, pipeline, owner->allocator);
-		}
-		for (auto& [_, pipeline]: pipelineLibrary.preRasterizationShaders) {
-			vkDestroyPipeline(handle, pipeline, owner->allocator);
-		}
-		for (auto& [_, pipeline]: pipelineLibrary.fragmentOutputInterfaces) {
-			vkDestroyPipeline(handle, pipeline, owner->allocator);
-		}
-		for (auto& [_, pipeline]: pipelineLibrary.fragmentShaders) {
-			vkDestroyPipeline(handle, pipeline, owner->allocator);
-		}
-
-		pipelineLibrary.vertexInputInterfaces.clear();
-		pipelineLibrary.preRasterizationShaders.clear();
-		pipelineLibrary.fragmentOutputInterfaces.clear();
-		pipelineLibrary.fragmentShaders.clear();
-
-		VB_LOG_TRACE("[ Free ] Cleaning up %zu device resources...", resources.size());
-
-		std::erase_if(resources, [](ResourceBase<DeviceResource>* const res) {
-			res->Free();
-			return 1;
-		});
-
-		for (auto& [_, sampler] : samplers) {
-			vkDestroySampler(handle, sampler, owner->allocator);
-		}
-
-		vmaDestroyAllocator(vmaAllocator);
-
-		vkDestroyDevice(handle, owner->allocator);
-		VB_LOG_TRACE("[ Free ] Destroyed logical device");
-		handle = VK_NULL_HANDLE;
-	}
-};
-
-struct DescriptorResource : ResourceBase<DeviceResource> {
-	VkDescriptorPool      pool   = VK_NULL_HANDLE;
-	VkDescriptorSetLayout layout = VK_NULL_HANDLE;
-	VkDescriptorSet       set    = VK_NULL_HANDLE;
-
-	// Bindless Resource IDs for descriptor indexing
-	struct BindingInfoExt: public BindingInfo {
-		std::vector<u32> resourceIDs;
-	};
-	std::unordered_map<DescriptorType, BindingInfoExt> bindings;
-
-	using ResourceBase::ResourceBase;
-
-	inline auto PopID(DescriptorType type) -> u32 {
-		auto it = bindings.find(type);
-		VB_ASSERT(it != bindings.end(), "Descriptor type not found");
-		u32 id = it->second.resourceIDs.back();
-		it->second.resourceIDs.pop_back();
-		return id; 
-	}
-
-	inline void PushID(DescriptorType type, u32 id) {
-		auto it = bindings.find(type);
-		VB_ASSERT(it != bindings.end(), "Descriptor type not found");
-		it->second.resourceIDs.push_back(id);
-	}
-
-	inline auto GetBinding(DescriptorType type) -> u32 {
-		auto it = bindings.find(type);
-		VB_ASSERT(it != bindings.end(), "Descriptor type not found");
-		return it->second.binding;
-	}
-
-	void Create(std::span<BindingInfo const> bindings);
-	auto CreateDescriptorSetLayout() -> VkDescriptorSetLayout;
-	auto CreateDescriptorPool()      -> VkDescriptorPool;
-	auto CreateDescriptorSets()      -> VkDescriptorSet;
-
-	auto GetType() -> char const* override { return "DescriptorResource"; }
-	void Free() override {
-		VB_LOG_TRACE("[ Free ] type = %s, name = %s", GetType(), GetName());
-		vkDestroyDescriptorPool(owner->handle, pool, owner->owner->allocator);
-		vkDestroyDescriptorSetLayout(owner->handle, layout, owner->owner->allocator);
-	}
-};
-
-struct BufferResource : ResourceBase<DeviceResource> {
-	u32 rid = NullRID;
-
-	VkBuffer handle;
-	VmaAllocation allocation;
-
-	u64 size;
-	vk::BufferUsageFlags usage;
-	MemoryFlags memory;
-
-	using ResourceBase::ResourceBase;
-
-	auto GetType() -> char const* override {  return "BufferResource"; }
-	void Free() override {
-		VB_LOG_TRACE("[ Free ] type = %s, name = %s", GetType(), GetName());
-		vmaDestroyBuffer(owner->vmaAllocator, handle, allocation);
-		if (rid != NullRID) {
-			owner->descriptor.resource->PushID(DescriptorType::eStorageBuffer, rid);
-		}
-	}
-};
-
-struct ImageResource : ResourceBase<DeviceResource> {
-	u32 rid = NullRID;
-
-	VkImage handle;
-	VkImageView view;
-	VmaAllocation allocation;
-	bool fromSwapchain = false;
-	SampleCount samples = SampleCount::e1;
-	std::vector<VkImageView> layersView;
-	Extent3D extent{};
-	vk::ImageUsageFlags usage;
-	vk::Format format;
-	ImageLayout layout;
-	vk::ImageAspectFlags aspect;
-	u32 layers = 1;
-
-	using ResourceBase::ResourceBase;
-
-	auto GetType() -> char const* override {  return "ImageResource"; }
-	void Free() override {
-		VB_LOG_TRACE("[ Free ] type = %s, name = %s", GetType(), GetName());
-		if (!fromSwapchain) {
-			for (VkImageView layerView : layersView) {
-				vkDestroyImageView(owner->handle, layerView, owner->owner->allocator);
-			}
-			layersView.clear();
-			vkDestroyImageView(owner->handle, view, owner->owner->allocator);
-			vmaDestroyImage(owner->vmaAllocator, handle, allocation);
-			if (rid != NullRID) {
-				if (usage & ImageUsage::eStorage) {
-					owner->descriptor.resource->PushID(DescriptorType::eStorageImage, rid);
-				}
-				if (usage & ImageUsage::eSampled) {
-					owner->descriptor.resource->PushID(DescriptorType::eCombinedImageSampler, rid);
-				}
-				// for (ImTextureID imguiRID : imguiRIDs) {
-					// ImGui_ImplVulkan_RemoveTexture((VkDescriptorSet)imguiRID);
-				// }
-			}
-		}
-	}
-};
-
-struct PipelineResource : ResourceBase<DeviceResource> {
-	VkPipeline handle;
-	VkPipelineLayout layout;
-	PipelinePoint point;
-
-	using ResourceBase::ResourceBase;
-
-	void CreatePipelineLayout(std::span<VkDescriptorSetLayout const> descriptorLayouts);
-
-	auto GetType() -> char const* override {  return "PipelineResource"; }
-	void Free() override {
-		VB_LOG_TRACE("[ Free ] type = %s, name = %s", GetType(), GetName());
-		vkDestroyPipeline(owner->handle, handle, owner->owner->allocator);
-		vkDestroyPipelineLayout(owner->handle, layout, owner->owner->allocator);
-	}
-};
-
-struct CommandResource : ResourceBase<DeviceResource> {
-	VkCommandBuffer handle = VK_NULL_HANDLE;
-	// QueueResource*  queue = nullptr;
-	VkCommandPool   pool  = VK_NULL_HANDLE;
-	VkFence         fence = VK_NULL_HANDLE;
-
-	using ResourceBase::ResourceBase;
-
-	void Create(u32 queueFamilyindex);
-
-	auto GetType() -> char const* override { return "CommandResource"; }
-
-	void Free() override {
-		VB_LOG_TRACE("[ Free ] type = %s, name = %s", GetType(), GetName());
-		vkDestroyCommandPool(owner->handle, pool, owner->owner->allocator);
-		vkDestroyFence(owner->handle, fence, owner->owner->allocator);
-	}
-};
 
 struct SwapChainResource: ResourceBase<DeviceResource> {
 	VkSwapchainKHR                  handle  = VK_NULL_HANDLE;
@@ -757,7 +135,7 @@ auto Image::GetResourceID() const -> u32 {
 	return resource->rid;
 }
 
-auto Image::GetFormat() const -> vk::Format {
+auto Image::GetFormat() const -> Format {
 	return resource->format;
 }
 
@@ -785,43 +163,7 @@ auto Instance::GetHandle() const -> vk::Instance {
 	return resource->handle;
 }
 
-void Device::UseDescriptor(Descriptor const& descriptor) {
-	resource->descriptor = descriptor;
-}
 
-auto Device::GetBinding(DescriptorType const type) -> u32 {
-	return resource->descriptor.GetBinding(type);
-}
-
-void Device::ResetStaging() {
-	resource->stagingOffset = 0;
-}
-
-auto Device::GetStagingPtr() -> u8* {
-	return resource->stagingCpu + resource->stagingOffset;
-}
-
-auto Device::GetStagingOffset() -> u32 {
-	return resource->stagingOffset;
-}
-
-auto Device::GetStagingSize() -> u32 {
-	return resource->init_info.staging_buffer_size;
-}
-
-auto Device::GetMaxSamples() -> SampleCount {
-	return resource->physicalDevice->maxSamples;
-}
-
-void Device::WaitQueue(Queue const& queue) {
-	auto result = vkQueueWaitIdle(queue.resource->handle);
-	VB_CHECK_VK_RESULT(resource->owner->init_info.checkVkResult, result, "Failed to wait idle command buffer");
-}
-
-void Device::WaitIdle() {
-	auto result = vkDeviceWaitIdle(resource->handle);
-	VB_CHECK_VK_RESULT(resource->owner->init_info.checkVkResult, result, "Failed to wait idle command buffer");
-}
 
 auto Queue::GetInfo() const -> QueueInfo {
 	return resource->init_info;
@@ -835,37 +177,8 @@ auto Queue::GetHandle() const -> vk::Queue {
 	return resource->handle;
 }
 
-auto Device::GetQueue(QueueInfo const& info) -> Queue {
-	for (auto& q : resource->queuesResources) {
-		if ((q.init_info.flags & info.flags) == info.flags &&
-				(bool(info.supported_surface) || 
-					q.init_info.supported_surface == info.supported_surface)) {
-			Queue queue;
-			queue.resource = &q;
-			return queue;
-		}
-	}
-	return Queue{};
-}
-
-auto Device::GetQueues() -> std::span<Queue> {
-	return resource->queues;
-}
-
-auto Device::CreateBuffer(BufferInfo const& info) -> Buffer {
-	return resource->CreateBuffer(info);
-}
-
-auto Device::CreateImage(ImageInfo const& info) -> Image {
-	return resource->CreateImage(info);
-}
-
-auto Descriptor::GetBinding(DescriptorType type) -> u32 {
-	return resource->GetBinding(type);
-}
-
 auto DeviceResource::CreateBuffer(BufferInfo const& info) -> Buffer {
-	vk::BufferUsageFlags usage = info.usage;
+	BufferUsageFlags usage = info.usage;
 	u32 size = info.size;
 
 	if (usage & BufferUsage::eVertexBuffer) {
@@ -986,13 +299,13 @@ auto DeviceResource::CreateImage(ImageInfo const& info) -> Image {
 	VB_VK_RESULT result = vmaCreateImage(vmaAllocator, &imageInfo, &allocInfo, &res->handle, &res->allocation, nullptr);
 	VB_CHECK_VK_RESULT(owner->init_info.checkVkResult, result, "Failed to create image!");
 	
-	vk::ImageAspectFlags aspect{};
+	ImageAspectFlags aspect{};
 	switch (info.format) {
-		case vk::Format::eD24UnormS8Uint:
+		case Format::eD24UnormS8Uint:
 			aspect = Aspect::eStencil; // Invalid, cannot be both stencil and depth, todo: create separate imageview
 		[[fallthrough]];
-		case vk::Format::eD32Sfloat:
-		case vk::Format::eD16Unorm:
+		case Format::eD32Sfloat:
+		case Format::eD16Unorm:
 			aspect |= Aspect::eDepth;
 			break;
 		[[likely]]
@@ -1041,7 +354,7 @@ auto DeviceResource::CreateImage(ImageInfo const& info) -> Image {
 	if (info.usage & ImageUsage::eSampled) {
 		ImageLayout newLayout = ImageLayout::eShaderReadOnlyOptimal;
 
-		vk::ImageAspectFlags ds = Aspect::eDepth | Aspect::eStencil;
+		ImageAspectFlags ds = Aspect::eDepth | Aspect::eStencil;
 		
 		if ((aspect & Aspect::eDepth) == Aspect::eDepth) [[unlikely]] {
 			newLayout = ImageLayout::eDepthReadOnlyOptimal;
@@ -1190,24 +503,7 @@ auto LoadShader(Pipeline::Stage const& stage) -> std::vector<char> {
 	}
 }
 
-void PipelineResource::CreatePipelineLayout(std::span<VkDescriptorSetLayout const> descriptorLayouts) {
-	VkPushConstantRange pushConstant{
-		.stageFlags = VK_SHADER_STAGE_ALL,
-		.offset     = 0,
-		.size       = owner->physicalDevice->physicalProperties2.properties.limits.maxPushConstantsSize,
-	};
 
-	VkPipelineLayoutCreateInfo pipelineLayoutInfo{
-		.sType                  = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
-		.setLayoutCount         = static_cast<u32>(descriptorLayouts.size()),
-		.pSetLayouts            = descriptorLayouts.data(),
-		.pushConstantRangeCount = 1,
-		.pPushConstantRanges    = &pushConstant,
-	};
-
-	VB_VK_RESULT result = vkCreatePipelineLayout(owner->handle, &pipelineLayoutInfo, owner->owner->allocator, &this->layout);
-	VB_CHECK_VK_RESULT(owner->owner->init_info.checkVkResult, result, "Failed to create pipeline layout!");
-}
 
 auto Device::CreatePipeline(PipelineInfo const& info) -> Pipeline {
 	VB_ASSERT(info.stages.size() > 0, "Pipeline should have at least one stage!");
@@ -1308,9 +604,9 @@ auto DeviceResource::CreatePipeline(PipelineInfo const& info) -> Pipeline {
 				.offset = attributeSize
 			};
 			switch (format) {
-			case vk::Format::eR32G32Sfloat:       attributeSize += 2 * sizeof(float); break;
-			case vk::Format::eR32G32B32Sfloat:    attributeSize += 3 * sizeof(float); break;
-			case vk::Format::eR32G32B32A32Sfloat: attributeSize += 4 * sizeof(float); break;
+			case Format::eR32G32Sfloat:       attributeSize += 2 * sizeof(float); break;
+			case Format::eR32G32B32Sfloat:    attributeSize += 3 * sizeof(float); break;
+			case Format::eR32G32B32A32Sfloat: attributeSize += 4 * sizeof(float); break;
 			default: VB_ASSERT(false, "Invalid Vertex Attribute"); break;
 			}
 			i++; // So we move it here
@@ -1493,9 +789,9 @@ void DeviceResource::PipelineLibrary::CreateVertexInputInterface(VertexInputInfo
 			.offset = attributeSize
 		};
 		switch (format) {
-		case vk::Format::eR32G32Sfloat:       attributeSize += 2 * sizeof(float); break;
-		case vk::Format::eR32G32B32Sfloat:    attributeSize += 3 * sizeof(float); break;
-		case vk::Format::eR32G32B32A32Sfloat: attributeSize += 4 * sizeof(float); break;
+		case Format::eR32G32Sfloat:       attributeSize += 2 * sizeof(float); break;
+		case Format::eR32G32B32Sfloat:    attributeSize += 3 * sizeof(float); break;
+		case Format::eR32G32B32A32Sfloat: attributeSize += 4 * sizeof(float); break;
 		default: VB_ASSERT(false, "Invalid Vertex Attribute"); break;
 		}
 		++i;
@@ -3290,34 +2586,6 @@ auto DescriptorResource::CreateDescriptorSets() -> VkDescriptorSet {
 }
 
 
-void CommandResource::Create(u32 queueFamilyindex) {
-	VkCommandPoolCreateInfo poolInfo {
-		.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
-		.flags = 0, // do not use VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT
-		.queueFamilyIndex = queueFamilyindex
-	};
-
-	VkCommandBufferAllocateInfo allocInfo {
-		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
-		.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
-		.commandBufferCount = 1,
-	};
-
-	VB_VK_RESULT result = vkCreateCommandPool(owner->handle, &poolInfo, owner->owner->allocator, &pool);
-	VB_CHECK_VK_RESULT(owner->owner->init_info.checkVkResult, result, "Failed to create command pool!");
-
-	allocInfo.commandPool = pool;
-	result = vkAllocateCommandBuffers(owner->handle, &allocInfo, &handle);
-	VB_CHECK_VK_RESULT(owner->owner->init_info.checkVkResult, result, "Failed to allocate command buffer!");
-
-	VkFenceCreateInfo fenceInfo{
-		.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
-		.flags = VK_FENCE_CREATE_SIGNALED_BIT,
-	};
-
-	result = vkCreateFence(owner->handle, &fenceInfo, owner->owner->allocator, &fence);
-	VB_CHECK_VK_RESULT(owner->owner->init_info.checkVkResult, result, "Failed to create fence!");
-}
 
 bool Command::Copy(Buffer const& dst, void const* data, u32 size, u32 dstOfsset) {
 	auto device = resource->owner;
