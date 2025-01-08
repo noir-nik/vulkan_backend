@@ -16,11 +16,13 @@ find_package(Vulkan REQUIRED)
 
 set(INCLUDE_DIRS
 	include
+	src
+	src/resource
 	deps/VulkanMemoryAllocator/include
 )
 
 # SRC
-file(GLOB SOURCES "src/*.cpp")
+file(GLOB SOURCES "src/*.cpp" "src/resource/*.cpp")
 
 # disable warning for vma
 if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")

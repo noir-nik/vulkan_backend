@@ -12,9 +12,6 @@ int main(){
 	int constexpr workgroup_size = 16;
 	int constexpr binding_buffer = 0;
 
-	// Set log verbosity
-	vb::SetLogLevel(vb::LogLevel::Info);
-
 	// Create instance object
 	vb::Instance instance = vb::CreateInstance({
 		.validation_layers = true,

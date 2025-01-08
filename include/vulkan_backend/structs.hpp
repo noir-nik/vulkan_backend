@@ -3,53 +3,28 @@
 
 #if !defined(VB_USE_STD_MODULE) || !VB_USE_STD_MODULE
 #include <cstdint>
-#elif !defined(_VB_INCLUDE_IN_MODULE)
+#elif defined(VB_DEV)
 import std;
 #endif
 
 #if !defined(VB_USE_VULKAN_MODULE) || !VB_USE_VULKAN_MODULE
 #include <vulkan/vulkan.hpp>
-#elif !defined(_VB_INCLUDE_IN_MODULE)
+#elif defined(VB_DEV)
 import vulkan_hpp;
 #endif
 
 #include <vulkan_backend/config.hpp>
-
-#ifdef MemoryBarrier
-#undef MemoryBarrier
-#endif
+#include "fwd.hpp"
 
 VB_EXPORT
 namespace VB_NAMESPACE {
-using i32 = std::int32_t;
-using u8  = std::uint8_t;
-using u32 = std::uint32_t;
-using u64 = std::uint64_t;
+enum class Memory {
+	GPU = vk::MemoryPropertyFlags::MaskType(vk::MemoryPropertyFlagBits::eDeviceLocal),
+	CPU = vk::MemoryPropertyFlags::MaskType(vk::MemoryPropertyFlagBits::eHostVisible)
+		| vk::MemoryPropertyFlags::MaskType(vk::MemoryPropertyFlagBits::eHostCoherent),
+};
 
-using vk::Extent2D;
-// using vk::Extent3D;
-using vk::Offset2D;
-using vk::Offset3D;
-using vk::Rect2D;
-
-using vk::ClearColorValue;
-using vk::ClearDepthStencilValue;
-using vk::ClearValue;
-using vk::QueueFamilyIgnored;
-using vk::DeviceSize;
-using vk::WholeSize;
-using vk::ImageLayout;
-using vk::AccessFlags;
-using vk::Filter;
-using vk::CompareOp;
-using vk::BorderColor;
-
-using PipelineStageFlags = vk::PipelineStageFlags2;
-using PipelineStage = vk::PipelineStageFlagBits2;
-using Access = vk::AccessFlagBits2;
-using SampleCount = vk::SampleCountFlagBits;
-using MipmapMode = vk::SamplerMipmapMode;
-using WrapMode = vk::SamplerAddressMode;
+using MemoryFlags = vk::Flags<Memory>;
 
 struct Viewport {
     float    x;
@@ -59,7 +34,6 @@ struct Viewport {
     float    minDepth = 0.0f;
     float    maxDepth = 1.0f;
 };
-
 
 struct Extent3D {
 	u32 width  = 0;
@@ -71,29 +45,11 @@ struct Extent3D {
 	}
 
 	explicit operator Offset3D(){
-		return {
-		static_cast<int>(width),
-		static_cast<int>(height),
-		static_cast<int>(depth)
-		};
+		return {static_cast<int>(width),
+				static_cast<int>(height),
+				static_cast<int>(depth)};
 	}
 };
-
-// union ClearColorValue {
-//     float float32[4];
-//     i32   int32[4];
-//     u32   uint32[4];
-// };
-
-// struct ClearDepthStencilValue {
-//     float depth;
-//     u32   stencil;
-// };
-
-// union ClearValue {
-//     ClearColorValue           color;
-//     ClearDepthStencilValue    depthStencil;
-// };
 
 struct ImageBlit {
 	// Corners of image e.g. { {0,0,0}, {width, height, depth} }
@@ -103,48 +59,6 @@ struct ImageBlit {
 	};
 	Region dst;
 	Region src;
-};
-
-struct SamplerInfo {
-	Filter magFilter = Filter::eLinear;
-	Filter minFilter = Filter::eLinear;
-	MipmapMode mipmapMode = MipmapMode::eLinear;
-	WrapMode wrapU = WrapMode::eRepeat;
-	WrapMode wrapV = WrapMode::eRepeat;
-	WrapMode wrapW = WrapMode::eRepeat;
-	float mipLodBias = 0.0f;
-	bool anisotropyEnable = false;
-	float maxAnisotropy = 0.0f;
-	bool compareEnable = false;
-	CompareOp compareOp = CompareOp::eAlways;
-	float minLod = 0.0f;
-	float maxLod = 1.0f;
-	BorderColor borderColor = BorderColor::eIntOpaqueBlack;
-	bool unnormalizedCoordinates = false;
-};
-
-/* ===== Synchronization 2 Barriers ===== */
-struct MemoryBarrier {
-	PipelineStageFlags srcStageMask  = PipelineStage::eAllCommands;
-	vk::AccessFlags2        srcAccessMask = Access::eShaderWrite;
-	PipelineStageFlags dstStageMask  = PipelineStage::eAllCommands;
-	vk::AccessFlags2        dstAccessMask = Access::eShaderRead;
-};
-
-struct BufferBarrier {
-	u32            srcQueueFamilyIndex = QueueFamilyIgnored;
-	u32            dstQueueFamilyIndex = QueueFamilyIgnored;
-	DeviceSize offset              = 0;
-	DeviceSize size                = WholeSize;
-	MemoryBarrier  memoryBarrier;
-};
-
-struct ImageBarrier {
-	ImageLayout newLayout           = ImageLayout::eUndefined; // == use previous layout
-	ImageLayout oldLayout           = ImageLayout::eUndefined; // == use previous layout
-	u32             srcQueueFamilyIndex = QueueFamilyIgnored;
-	u32             dstQueueFamilyIndex = QueueFamilyIgnored;
-	MemoryBarrier memoryBarrier;
 };
 
 } // VB_NAMESPACE

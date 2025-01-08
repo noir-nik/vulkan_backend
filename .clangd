@@ -3,5 +3,10 @@ CompileFlags:
     -std=c++20,
     -Iinclude,
     -Ideps/VulkanMemoryAllocator/include,
+    -DVULKAN_HPP_NO_EXCEPTIONS,
+    -DVULKAN_HPP_RAII_NO_EXCEPTIONS,
+    -DVULKAN_HPP_NO_SMART_HANDLE,
+    -DVULKAN_HPP_NO_CONSTRUCTORS,
+    -DVULKAN_HPP_NO_UNION_CONSTRUCTORS,
     # -fmodule-file=vulkan_hpp=build/CMakeFiles/VulkanHppModule.dir/vulkan_hpp.pcm,
   ]
