@@ -1,9 +1,9 @@
-#if !defined(VB_USE_STD_MODULE) || !VB_USE_STD_MODULE
+#ifndef VB_USE_STD_MODULE
 #else
 import std;
 #endif
 
-#if !defined(VB_USE_VULKAN_MODULE) || !VB_USE_VULKAN_MODULE
+#ifndef VB_USE_VULKAN_MODULE
 #include <vulkan/vulkan.hpp>
 #else
 import vulkan_hpp;
@@ -466,35 +466,6 @@ void Command::End() {
 	// resource->currentPipeline = {};
 }
 
-void CommandResource::Create(u32 queueFamilyindex) {
-	VkCommandPoolCreateInfo poolInfo {
-		.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
-		.flags = 0, // do not use VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT
-		.queueFamilyIndex = queueFamilyindex
-	};
-
-	VkCommandBufferAllocateInfo allocInfo {
-		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
-		.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
-		.commandBufferCount = 1,
-	};
-
-	VB_VK_RESULT result = vkCreateCommandPool(owner->handle, &poolInfo, owner->owner->allocator, &pool);
-	VB_CHECK_VK_RESULT(owner->owner->init_info.checkVkResult, result, "Failed to create command pool!");
-
-	allocInfo.commandPool = pool;
-	result = vkAllocateCommandBuffers(owner->handle, &allocInfo, &handle);
-	VB_CHECK_VK_RESULT(owner->owner->init_info.checkVkResult, result, "Failed to allocate command buffer!");
-
-	VkFenceCreateInfo fenceInfo{
-		.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
-		.flags = VK_FENCE_CREATE_SIGNALED_BIT,
-	};
-
-	result = vkCreateFence(owner->handle, &fenceInfo, owner->owner->allocator, &fence);
-	VB_CHECK_VK_RESULT(owner->owner->init_info.checkVkResult, result, "Failed to create fence!");
-}
-
 void Command::QueueSubmit(Queue const& queue, SubmitInfo const& info) {
 
 	// VkCommandBufferSubmitInfo cmdInfo {
@@ -530,6 +501,35 @@ auto Command::GetHandle() const -> vk::CommandBuffer {
 
 auto Command::GetFence() const -> Fence {
 	return resource->fence;
+}
+
+void CommandResource::Create(u32 queueFamilyindex) {
+	VkCommandPoolCreateInfo poolInfo {
+		.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+		.flags = 0, // do not use VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT
+		.queueFamilyIndex = queueFamilyindex
+	};
+
+	VkCommandBufferAllocateInfo allocInfo {
+		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+		.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+		.commandBufferCount = 1,
+	};
+
+	VB_VK_RESULT result = vkCreateCommandPool(owner->handle, &poolInfo, owner->owner->allocator, &pool);
+	VB_CHECK_VK_RESULT(owner->owner->init_info.checkVkResult, result, "Failed to create command pool!");
+
+	allocInfo.commandPool = pool;
+	result = vkAllocateCommandBuffers(owner->handle, &allocInfo, &handle);
+	VB_CHECK_VK_RESULT(owner->owner->init_info.checkVkResult, result, "Failed to allocate command buffer!");
+
+	VkFenceCreateInfo fenceInfo{
+		.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+		.flags = VK_FENCE_CREATE_SIGNALED_BIT,
+	};
+
+	result = vkCreateFence(owner->handle, &fenceInfo, owner->owner->allocator, &fence);
+	VB_CHECK_VK_RESULT(owner->owner->init_info.checkVkResult, result, "Failed to create fence!");
 }
 
 auto CommandResource::GetType() const -> char const* { return "CommandResource"; }

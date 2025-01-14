@@ -1,7 +1,7 @@
 #ifndef VULKAN_BACKEND_RESOURCE_PIPELINE_LIBRARY_HPP_
 #define VULKAN_BACKEND_RESOURCE_PIPELINE_LIBRARY_HPP_
 
-#if !defined(VB_USE_STD_MODULE) || !VB_USE_STD_MODULE
+#ifndef VB_USE_STD_MODULE
 #include <span>
 #include <unordered_map>
 #else

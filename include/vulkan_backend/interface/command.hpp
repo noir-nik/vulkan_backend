@@ -1,7 +1,7 @@
 #ifndef VULKAN_BACKEND_COMMAND_HPP_
 #define VULKAN_BACKEND_COMMAND_HPP_
 
-#if !defined(VB_USE_STD_MODULE) || !VB_USE_STD_MODULE
+#ifndef VB_USE_STD_MODULE
 #include <memory>
 #include <span>
 #elif defined(VB_DEV)

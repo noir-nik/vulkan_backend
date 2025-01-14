@@ -1,9 +1,9 @@
-#if !defined(VB_USE_STD_MODULE) || !VB_USE_STD_MODULE
+#ifndef VB_USE_STD_MODULE
 #else
 import std;
 #endif
 
-#if !defined(VB_USE_VULKAN_MODULE) || !VB_USE_VULKAN_MODULE
+#ifndef VB_USE_VULKAN_MODULE
 #include <vulkan/vulkan.hpp>
 #else
 import vulkan_hpp;

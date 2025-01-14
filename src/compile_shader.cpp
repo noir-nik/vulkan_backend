@@ -1,4 +1,4 @@
-#if !defined(VB_USE_STD_MODULE) || !VB_USE_STD_MODULE
+#ifndef VB_USE_STD_MODULE
 #include <filesystem>
 #include <fstream>
 #include <string_view>
@@ -6,7 +6,7 @@
 import std;
 #endif
 
-#if !defined(VB_USE_VULKAN_MODULE) || !VB_USE_VULKAN_MODULE
+#ifndef VB_USE_VULKAN_MODULE
 #include <vulkan/vulkan.hpp>
 #else
 import vulkan_hpp;

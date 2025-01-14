@@ -1,12 +1,12 @@
 #include <cstdarg>
 
-#if !defined(VB_USE_STD_MODULE) || !VB_USE_STD_MODULE
+#ifndef VB_USE_STD_MODULE
 #include <cstdio>
 #else
 import std.compat;
 #endif
 
-#if !defined(VB_USE_VULKAN_MODULE) || !VB_USE_VULKAN_MODULE
+#ifndef VB_USE_VULKAN_MODULE
 #include <vulkan/vulkan.hpp>
 #else
 import vulkan_hpp;
@@ -22,7 +22,7 @@ void CheckVkResultDefault(Result result, char const* message) {
 		return;
 	}
 	// stderr macro is not accessible with std module
-#if !defined(VB_USE_STD_MODULE) || !VB_USE_STD_MODULE
+#ifndef VB_USE_STD_MODULE
 	fprintf(stderr, "[VULKAN ERROR: %s] %s\n", StringFromVkResult(result), message);
 #else
 	std::cerr << "[VULKAN ERROR: " << StringFromVkResult(result) << "] " << message << '\n';

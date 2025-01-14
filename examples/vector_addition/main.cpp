@@ -1,10 +1,27 @@
+#ifndef VB_USE_STD_MODULE
 #include <algorithm>
 #include <vector>
 #include <numeric>
 #include <cmath>
 #include <cassert>
+#include <cstdio>
+#else
+import std;
+#endif
 
+#include <cassert>
+
+#ifndef VB_USE_VULKAN_MODULE
+#include <vulkan/vulkan.hpp>
+#else
+import vulkan_hpp;
+#endif
+
+#ifndef VB_BUILD_CPP_MODULE
 #include <vulkan_backend/core.hpp>
+#else
+import vulkan_backend;
+#endif
 
 int main(){
 	// Define constants for compute shader vector addition
@@ -87,9 +104,9 @@ int main(){
 	// Define constants with Resource IDs for descriptor indexing
 	// and vector size
 	struct Constants {
-		uint32_t vector_a_RID;
-		uint32_t vector_b_RID;
-		uint32_t vector_result_RID;
+		std::uint32_t vector_a_RID;
+		std::uint32_t vector_b_RID;
+		std::uint32_t vector_result_RID;
 		int vector_size;
 	};
 
@@ -119,7 +136,7 @@ int main(){
 	cmd.Barrier(device_buffer_b);
 
 	// Dispatch 1D compute shader
-	cmd.Dispatch(ceil(vector_size / static_cast<float>(workgroup_size)), 1, 1);
+	cmd.Dispatch(std::ceil(vector_size / static_cast<float>(workgroup_size)), 1, 1);
 
 	// Place barrier to wait for compute shader completion
 	cmd.Barrier(device_buffer_a);

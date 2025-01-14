@@ -1,7 +1,7 @@
 #ifndef VULKAN_BACKEND_COMPILE_SHADER_HPP_
 #define VULKAN_BACKEND_COMPILE_SHADER_HPP_
 
-#if !defined(VB_USE_STD_MODULE) || !VB_USE_STD_MODULE
+#ifndef VB_USE_STD_MODULE
 #include <string_view>
 #else
 import std;

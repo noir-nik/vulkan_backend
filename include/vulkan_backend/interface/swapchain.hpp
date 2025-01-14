@@ -1,13 +1,13 @@
 #ifndef VULKAN_BACKEND_SWAPCHAIN_HPP_
 #define VULKAN_BACKEND_SWAPCHAIN_HPP_
 
-#if !defined(VB_USE_STD_MODULE) || !VB_USE_STD_MODULE
+#ifndef VB_USE_STD_MODULE
 #include <memory>
 #elif defined(VB_DEV)
 import std;
 #endif
 
-#if !defined(VB_USE_VULKAN_MODULE) || !VB_USE_VULKAN_MODULE
+#ifndef VB_USE_VULKAN_MODULE
 #include <vulkan/vulkan.hpp>
 #elif defined(VB_DEV)
 import vulkan_hpp;

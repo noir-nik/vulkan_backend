@@ -1,7 +1,7 @@
 #ifndef VULKAN_BACKEND_RESOURCE_INSTANCE_HPP_
 #define VULKAN_BACKEND_RESOURCE_INSTANCE_HPP_
 
-#if !defined(VB_USE_STD_MODULE) || !VB_USE_STD_MODULE
+#ifndef VB_USE_STD_MODULE
 #include <set>
 #include <string_view>
 #else

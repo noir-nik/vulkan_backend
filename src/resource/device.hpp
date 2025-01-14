@@ -1,14 +1,14 @@
 #ifndef VULKAN_BACKEND_RESOURCE_DEVICE_HPP_
 #define VULKAN_BACKEND_RESOURCE_DEVICE_HPP_
 
-#if !defined(VB_USE_STD_MODULE) || !VB_USE_STD_MODULE
+#ifndef VB_USE_STD_MODULE
 #include <set>
 #include <string_view>
 #elif defined(VB_DEV)
 import std;
 #endif
 
-#if !defined(VB_USE_VULKAN_MODULE) || !VB_USE_VULKAN_MODULE
+#ifndef VB_USE_VULKAN_MODULE
 #include <vulkan/vulkan.hpp>
 #else
 import vulkan_hpp;

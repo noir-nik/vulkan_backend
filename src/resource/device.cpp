@@ -1,20 +1,14 @@
-#if !defined(VB_USE_STD_MODULE) || !VB_USE_STD_MODULE
+#ifndef VB_USE_STD_MODULE
 #include <algorithm>
 #include <numeric>
 #else
 import std;
 #endif
 
-#if !defined(VB_USE_VULKAN_MODULE) || !VB_USE_VULKAN_MODULE
+#ifndef VB_USE_VULKAN_MODULE
 #include <vulkan/vulkan.hpp>
 #else
 import vulkan_hpp;
-#endif
-
-#if !defined(VB_USE_VULKAN_MODULE) || !VB_USE_VULKAN_MODULE
-#include <vulkan/vulkan.hpp>
-#else
-// import vulkan_hpp;
 #endif
 
 #include <vulkan/vulkan.h>
