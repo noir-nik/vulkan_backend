@@ -111,7 +111,8 @@ void PipelineLibrary::CreateVertexInputInterface(VertexInputInfo const& info) {
 		.primitiveRestartEnable = VK_FALSE,
 	};
 
-	VB_VLA(VkVertexInputAttributeDescription, attributeDescs, info.vertexAttributes.size());
+	// We use std::vector, because vertexAttributes can be empty and vla with size 0 is undefined behavior
+	std::vector<VkVertexInputAttributeDescription> attributeDescs(info.vertexAttributes.size());
 	u32 attributeSize = 0;
 	for (u32 i = 0; auto& format: info.vertexAttributes) {
 		attributeDescs[i] = VkVertexInputAttributeDescription{
@@ -126,12 +127,12 @@ void PipelineLibrary::CreateVertexInputInterface(VertexInputInfo const& info) {
 		case Format::eR32G32B32A32Sfloat: attributeSize += 4 * sizeof(float); break;
 		default: VB_ASSERT(false, "Invalid Vertex Attribute"); break;
 		}
-		++i;
+		i++;
 	}
 
 	VkVertexInputBindingDescription bindingDescription{
-		.binding = 0,
-		.stride = attributeSize,
+		.binding   = 0,
+		.stride    = attributeSize,
 		.inputRate = VK_VERTEX_INPUT_RATE_VERTEX,
 	};
 
@@ -139,7 +140,7 @@ void PipelineLibrary::CreateVertexInputInterface(VertexInputInfo const& info) {
 		.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
 		.vertexBindingDescriptionCount = 1,
 		.pVertexBindingDescriptions = &bindingDescription,
-		.vertexAttributeDescriptionCount = (u32)(attributeDescs.size()),
+		.vertexAttributeDescriptionCount = static_cast<u32>(attributeDescs.size()),
 		.pVertexAttributeDescriptions = attributeDescs.data(),
 	};
 

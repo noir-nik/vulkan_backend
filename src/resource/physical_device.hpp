@@ -52,6 +52,17 @@ struct PhysicalDeviceResource : NoCopy {
 			VkQueueFlags flags;
 			float penalty;
 		};
+		// Default avoid flags for compute, transfer and all other queues
+		// to select the best queue
+		AvoidInfo static constexpr inline kAvoidCompute[] = {
+			{VK_QUEUE_GRAPHICS_BIT, 1.0f}, {VK_QUEUE_TRANSFER_BIT, 0.5f}
+		};
+		AvoidInfo static constexpr inline kAvoidTransfer[] = {
+			{VK_QUEUE_GRAPHICS_BIT, 1.0f}, {VK_QUEUE_COMPUTE_BIT, 0.5f}
+		};
+		AvoidInfo static constexpr inline kAvoidOther[] = {
+			{VK_QUEUE_GRAPHICS_BIT, 1.0f}
+		};
 		VkQueueFlags desiredFlags;
 		VkQueueFlags undesiredFlags;
 		std::span<AvoidInfo const> avoidIfPossible = {};

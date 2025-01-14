@@ -1,4 +1,5 @@
 #if !defined(VB_USE_STD_MODULE) || !VB_USE_STD_MODULE
+#include <limits>
 #else
 import std;
 #endif

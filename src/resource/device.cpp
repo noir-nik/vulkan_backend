@@ -182,17 +182,18 @@ void DeviceResource::Create(DeviceInfo const& info) {
 			bool deviceSuitable = true;
 			for (auto& queue_info: info.queues) {
 				// Queue choosing heuristics
-				std::span<PhysicalDeviceResource::QueueFamilyIndexRequest::AvoidInfo const> avoid_if_possible{};
+				using AvoidInfo = PhysicalDeviceResource::QueueFamilyIndexRequest::AvoidInfo;
+				std::span<AvoidInfo const> avoid_if_possible;
 				if(queue_info.separate_family) {
 					switch (QueueFlags::MaskType(queue_info.flags)) {
 					case VK_QUEUE_COMPUTE_BIT: 
-						avoid_if_possible = {{{VK_QUEUE_GRAPHICS_BIT, 1.0f}, {VK_QUEUE_TRANSFER_BIT, 0.5f}}};
+						avoid_if_possible = PhysicalDeviceResource::QueueFamilyIndexRequest::kAvoidCompute;
 						break;
 					case VK_QUEUE_TRANSFER_BIT:
-						avoid_if_possible = {{{VK_QUEUE_GRAPHICS_BIT, 1.0f}, {VK_QUEUE_COMPUTE_BIT, 0.5f}}};
+						avoid_if_possible = PhysicalDeviceResource::QueueFamilyIndexRequest::kAvoidTransfer;
 						break;
 					default:
-						avoid_if_possible = {{{VK_QUEUE_GRAPHICS_BIT, 1.0f}}};
+						avoid_if_possible = PhysicalDeviceResource::QueueFamilyIndexRequest::kAvoidOther;
 						break;
 					}
 				}
@@ -785,14 +786,15 @@ auto DeviceResource::CreatePipeline(PipelineInfo const& info) -> Pipeline {
 			.maxDepthBounds        = 1.0f,
 		};
 
-		VB_VLA(VkVertexInputAttributeDescription, attributeDescs, info.vertexAttributes.size());
+		// We use std::vector, because vertexAttributes can be empty and vla with size 0 is undefined behavior
+		std::vector<VkVertexInputAttributeDescription> attributeDescs(info.vertexAttributes.size());
 		u32 attributeSize = 0;
 		for (u32 i = 0; auto& format: info.vertexAttributes) {
 			// attributeDescs[i++] = VkVertexInputAttributeDescription{ // This gives a bug with gcc (.location starts at 1, not 0)
 			attributeDescs[i] = VkVertexInputAttributeDescription{
 				.location = i,
 				.binding = 0,
-				.format = static_cast<VkFormat>(format),
+				.format = VkFormat(format),
 				.offset = attributeSize
 			};
 			switch (format) {
@@ -947,7 +949,7 @@ void DeviceResource::SetDebugUtilsObjectName(VkDebugUtilsObjectNameInfoEXT const
 }
 
 auto DeviceResource::GetName() const -> char const* {
-	return physicalDevice->physicalProperties2.properties.deviceName;
+	return name.data();
 }
 
 auto DeviceResource::GetType() const -> char const* {

@@ -16,9 +16,18 @@ import std;
 VB_EXPORT
 namespace VB_NAMESPACE {
 struct DeviceInfo {
+	// Default staging buffer size
 	u32 static constexpr inline kStagingSize = 64 * 1024 * 1024;
+	
+	// By default device is created with one graphics queue
+	// This is extracted to static member, because 
+	// libc++ on linux does not support P1394R4, so we can not use 
+	// std::span range constructor
+	QueueInfo static constexpr inline kQueuesDefault[] = {
+		{QueueFlagBits::eGraphics}
+	};
 
-	std::span<QueueInfo const> queues = {{{QueueFlagBits::eGraphics}}};
+	std::span<QueueInfo const> queues = kQueuesDefault;
 	u32 staging_buffer_size = kStagingSize;
 
 	// Graphics pipeline library
@@ -31,18 +40,21 @@ struct DeviceInfo {
 
 class Device {
 public:
+	BindingInfo static constexpr kDefaultBindings[] = {
+		{DescriptorType::eSampledImage},
+		{DescriptorType::eStorageBuffer},
+	};
+
 	[[nodiscard]] auto CreateImage(ImageInfo const& info)           -> Image;
 	[[nodiscard]] auto CreateBuffer(BufferInfo const& info)         -> Buffer;
 	[[nodiscard]] auto CreatePipeline(PipelineInfo const& info)     -> Pipeline;
 	[[nodiscard]] auto CreateSwapchain(SwapchainInfo const& info)   -> Swapchain;
 	[[nodiscard]] auto CreateCommand(u32 queueFamilyindex)          -> Command;
-	
 	[[nodiscard]] auto CreateDescriptor(
 		std::span<BindingInfo const> bindings = {{
-			{DescriptorType::eSampledImage},
-			{DescriptorType::eStorageBuffer},
-		}}
-	) -> Descriptor;
+		{DescriptorType::eSampledImage},
+		{DescriptorType::eStorageBuffer},
+	}}) -> Descriptor;
 
 	void WaitQueue(Queue const& queue);
 	void WaitIdle();

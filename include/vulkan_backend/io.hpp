@@ -17,7 +17,6 @@ enum class LogLevel {
 	Info,
 	Warning,
 	Error,
-	None,
 };
 
 void CheckVkResultDefault(Result result, char const* message);

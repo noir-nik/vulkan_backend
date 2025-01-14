@@ -60,10 +60,14 @@ private:
 };
 
 struct PipelineInfo {
+	// Dynamic states enabled by default
+	DynamicState static constexpr inline kDefaultDynamicStates[] = {
+		DynamicState::eViewport, DynamicState::eScissor
+	};
+	
 	// Necessary for any pipeline creation
 	PipelinePoint const&                    point;
 	std::span<Pipeline::Stage const> const& stages;
-	
 	// Data for graphics pipeline
 	std::span<Format const>          vertexAttributes  = {};
 	std::span<Format const>          color_formats     = {};
@@ -72,7 +76,7 @@ struct PipelineInfo {
 	SampleCount                      samples           = SampleCount::e1;
 	CullModeFlags                    cullMode          = CullMode::eNone;
 	bool                             line_topology     = false;
-	std::span<DynamicState const>    dynamicStates     = {{DynamicState::eViewport, DynamicState::eScissor}};
+	std::span<DynamicState const>    dynamicStates     = kDefaultDynamicStates;
 	std::string_view                 name              = "";
 };
 } // namespace VB_NAMESPACE

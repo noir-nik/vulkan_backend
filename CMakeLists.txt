@@ -39,15 +39,26 @@ target_include_directories(${PROJECT_NAME} PUBLIC ${INCLUDE_DIRS})
 target_link_libraries(${PROJECT_NAME} PRIVATE Vulkan::Vulkan)
 
 option(VB_USE_VULKAN_MODULE OFF)
+option(VB_USE_STD_MODULE OFF)
 option(VB_BUILD_CPP_MODULE OFF)
 
-add_definitions(
-	-DVULKAN_HPP_NO_EXCEPTIONS
-	-DVULKAN_HPP_RAII_NO_EXCEPTIONS
-	-DVULKAN_HPP_NO_SMART_HANDLE
-	-DVULKAN_HPP_NO_CONSTRUCTORS
-	-DVULKAN_HPP_NO_UNION_CONSTRUCTORS
+set(VULKAN_HPP_DEFINITIONS
+	VULKAN_HPP_NO_EXCEPTIONS
+	VULKAN_HPP_RAII_NO_EXCEPTIONS
+	VULKAN_HPP_NO_SMART_HANDLE
+	VULKAN_HPP_NO_CONSTRUCTORS
+	VULKAN_HPP_NO_UNION_CONSTRUCTORS
 )
+
+target_compile_definitions(${PROJECT_NAME} PUBLIC ${VULKAN_HPP_DEFINITIONS})
+
+if (${VB_USE_VULKAN_MODULE})
+	target_compile_definitions(${PROJECT_NAME} PUBLIC "VB_USE_VULKAN_MODULE=1")
+endif()
+
+if (${VB_USE_STD_MODULE})
+	target_compile_definitions(${PROJECT_NAME} PUBLIC "VB_USE_STD_MODULE=1")
+endif()
 
 if(VB_BUILD_CPP_MODULE)
 	if(VB_MODULES_AVAILABLE)
@@ -69,9 +80,9 @@ if(VB_BUILD_CPP_MODULE)
 		target_link_libraries(vulkan_backend_module PRIVATE vulkan_backend::vulkan_backend)
 		target_include_directories(vulkan_backend_module PRIVATE ${INCLUDE_DIRS})
 
-		target_compile_definitions(vulkan_backend_module PUBLIC "VB_USE_STD_MODULE=$<BOOL:${VB_USE_STD_MODULE}>")
+		target_compile_definitions(vulkan_backend_module PUBLIC ${VULKAN_HPP_DEFINITIONS})
 	else()
-		message(WARNING "VB_BUILD_CPP_MODULE is ON but compiler does not support moduules")
+		message(WARNING "VB_BUILD_CPP_MODULE is ON but compiler does not support modules")
 	endif()
 endif()
 
@@ -101,6 +112,6 @@ if (${VB_USE_VULKAN_MODULE})
 	target_link_libraries( VulkanHppModule PUBLIC Vulkan::Vulkan )
 
 	target_link_libraries( ${PROJECT_NAME} PRIVATE VulkanHppModule )
-	target_compile_definitions(${PROJECT_NAME} PUBLIC "VB_USE_VULKAN_MODULE=$<BOOL:${VB_USE_VULKAN_MODULE}>")
+	target_compile_definitions(VulkanHppModule PUBLIC ${VULKAN_HPP_DEFINITIONS})
 
 endif()
