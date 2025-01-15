@@ -21,26 +21,30 @@ static inline auto operator==(Pipeline::Stage const& lhs, Pipeline::Stage const&
 }
 
 struct PipelineLibrary {
+	Pipeline CreatePipeline(PipelineInfo const& desc);
+	void Free();
+
+private:
 	struct VertexInputInfo {
 		std::span<vk::Format const> vertexAttributes;
 		bool lineTopology = false;
 	};
 
 	struct PreRasterizationInfo {
-		VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
+		VkPipelineLayout layout = VK_NULL_HANDLE;
 		bool lineTopology = false;
 		CullModeFlags cullMode = CullMode::eNone;
 		std::span<Pipeline::Stage const> stages;
 	};
 
 	struct FragmentShaderInfo {
-		VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
+		VkPipelineLayout layout = VK_NULL_HANDLE;
 		SampleCount samples;
 		std::span<Pipeline::Stage const> stages;
 	};
 
 	struct FragmentOutputInfo {
-		VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
+		VkPipelineLayout layout = VK_NULL_HANDLE;
 		std::span<vk::Format const> colorFormats;
 		bool useDepth;
 		vk::Format depthFormat;
@@ -97,7 +101,7 @@ struct PipelineLibrary {
 
 	struct FragmentOutputHash {
 		auto operator()(FragmentOutputInfo const& info) const -> size_t {
-			size_t hash = HashCombine(FormatSpanHash(info.colorFormats), reinterpret_cast<size_t>(info.pipelineLayout));
+			size_t hash = HashCombine(FormatSpanHash(info.colorFormats), reinterpret_cast<size_t>(info.layout));
 			hash = HashCombine(hash, info.useDepth);
 			hash = HashCombine(hash, static_cast<size_t>(info.depthFormat));
 			hash = HashCombine(hash, static_cast<size_t>(info.samples));
@@ -106,7 +110,7 @@ struct PipelineLibrary {
 
 		auto operator()(FragmentOutputInfo const& a, FragmentOutputInfo const& b) const -> bool {
 			return std::equal(a.colorFormats.begin(), a.colorFormats.end(), b.colorFormats.begin()) && 
-				a.pipelineLayout == b.pipelineLayout && 
+				a.layout == b.layout && 
 				a.useDepth == b.useDepth && 
 				a.depthFormat == b.depthFormat && 
 				a.samples == b.samples;
@@ -119,34 +123,30 @@ struct PipelineLibrary {
 			for (auto const& stage: info.stages) {
 				hash = HashCombine(hash, StageHash(stage));
 			}
-			hash = HashCombine(hash, reinterpret_cast<size_t>(info.pipelineLayout));
+			hash = HashCombine(hash, reinterpret_cast<size_t>(info.layout));
 			hash = HashCombine(hash, static_cast<size_t>(info.samples));
 			return hash;
 		}
 		auto operator()(FragmentShaderInfo const& a, FragmentShaderInfo const& b) const -> bool {
 			return a.stages.size() == b.stages.size() && 
 				std::equal(a.stages.begin(), a.stages.end(), b.stages.begin()) && 
-				a.pipelineLayout == b.pipelineLayout && 
+				a.layout == b.layout && 
 				a.samples == b.samples;
 		}
 	};
+
+	void CreateVertexInputInterface(VertexInputInfo const& info);
+	void CreatePreRasterizationShaders(PreRasterizationInfo const& info);
+	void CreateFragmentShader(FragmentShaderInfo const& info);
+	void CreateFragmentOutputInterface(FragmentOutputInfo const& info);
+	auto LinkPipeline(std::array<VkPipeline, 4> const& pipelines, VkPipelineLayout layout, bool link_time_optimization) -> VkPipeline;
 
 	DeviceResource* device = nullptr;
 	std::unordered_map<VertexInputInfo, VkPipeline,VertexInputHash, VertexInputHash> vertexInputInterfaces;
 	std::unordered_map<PreRasterizationInfo, VkPipeline, PreRasterizationHash, PreRasterizationHash> preRasterizationShaders;
 	std::unordered_map<FragmentOutputInfo, VkPipeline, FragmentOutputHash, FragmentOutputHash> fragmentOutputInterfaces;
 	std::unordered_map<FragmentShaderInfo, VkPipeline, FragmentShaderHash, FragmentShaderHash> fragmentShaders;
-
-	Pipeline CreatePipeline(PipelineInfo const& desc);
-	void Free();
-
-private:
-	void CreateVertexInputInterface(VertexInputInfo const& info);
-	void CreatePreRasterizationShaders(PreRasterizationInfo const& info);
-	void CreateFragmentShader(FragmentShaderInfo const& info);
-	void CreateFragmentOutputInterface(FragmentOutputInfo const& info);
-	auto LinkPipeline(std::array<VkPipeline, 4> const& pipelines, VkPipelineLayout layout) -> VkPipeline;
+	friend DeviceResource;
 };
 } // namespace VB_NAMESPACE
-
 #endif // VULKAN_BACKEND_RESOURCE_PIPELINE_LIBRARY_HPP_

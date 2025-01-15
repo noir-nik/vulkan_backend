@@ -22,9 +22,15 @@ namespace VB_NAMESPACE {
 void PhysicalDeviceResource::GetDetails() {
 	// get all available extensions
 	u32 extensionCount;
-	vkEnumerateDeviceExtensionProperties(handle, nullptr, &extensionCount, nullptr);
-	availableExtensions.resize(extensionCount);
-	vkEnumerateDeviceExtensionProperties(handle, nullptr, &extensionCount, availableExtensions.data());
+	VB_VK_RESULT result;
+	do {
+		result = vkEnumerateDeviceExtensionProperties(handle, nullptr, &extensionCount, nullptr);
+		if (result == VK_SUCCESS) {
+			availableExtensions.resize(extensionCount);
+			result = vkEnumerateDeviceExtensionProperties(handle, nullptr, &extensionCount, availableExtensions.data());
+		}
+	} while (result == VK_INCOMPLETE);
+	VB_CHECK_VK_RESULT(instance->init_info.checkVkResult, result, "Failed to enumerate device extensions!");
 
 	// get all available families
 	u32 familyCount = 0;
@@ -32,25 +38,31 @@ void PhysicalDeviceResource::GetDetails() {
 	availableFamilies.resize(familyCount);
 	vkGetPhysicalDeviceQueueFamilyProperties(handle, &familyCount, availableFamilies.data());
 
-	// get features
-	unusedAttachmentFeatures        = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_UNUSED_ATTACHMENTS_FEATURES_EXT, nullptr };
-	graphicsPipelineLibraryFeatures = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_GRAPHICS_PIPELINE_LIBRARY_FEATURES_EXT, &unusedAttachmentFeatures };
-	indexingFeatures                = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES_EXT,       &graphicsPipelineLibraryFeatures };
-	bufferDeviceAddressFeatures     = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES,         &indexingFeatures };
-	synchronization2Features        = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES_KHR,         &bufferDeviceAddressFeatures };
-	dynamicRenderingFeatures        = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_FEATURES,             &synchronization2Features };
-	physicalFeatures2               = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,                             &dynamicRenderingFeatures };
-	vkGetPhysicalDeviceFeatures2(handle, &physicalFeatures2);
+	auto physicalDevice = vk::PhysicalDevice(handle);
+
+	features = physicalDevice.getFeatures2<
+		vk::PhysicalDeviceFeatures2,
+		vk::PhysicalDeviceVulkan11Features,
+		vk::PhysicalDeviceVulkan12Features,
+		vk::PhysicalDeviceVulkan13Features,
+#ifdef VK_VERSION_1_4
+		vk::PhysicalDeviceVulkan14Features,
+#endif
+		vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT,
+		vk::PhysicalDeviceGraphicsPipelineLibraryFeaturesEXT,
+		vk::PhysicalDeviceDynamicRenderingUnusedAttachmentsFeaturesEXT>();
 
 	// get properties
-	graphicsPipelineLibraryProperties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_GRAPHICS_PIPELINE_LIBRARY_PROPERTIES_EXT;
-	graphicsPipelineLibraryProperties.pNext = nullptr;
-	physicalProperties2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
-	physicalProperties2.pNext = &graphicsPipelineLibraryProperties;
-	vkGetPhysicalDeviceProperties2(handle, &physicalProperties2);
-	vkGetPhysicalDeviceMemoryProperties(handle, &memoryProperties);
+	properties = physicalDevice.getProperties2<
+            vk::PhysicalDeviceProperties2,
+			vk::PhysicalDeviceGraphicsPipelineLibraryPropertiesEXT,
+            vk::PhysicalDeviceSubgroupProperties>();
 
-	VkSampleCountFlags counts = physicalProperties2.properties.limits.framebufferColorSampleCounts;
+	VkSampleCountFlags counts =
+		VkSampleCountFlags(properties.get<vk::PhysicalDeviceProperties2>()
+							   .properties.limits.framebufferColorSampleCounts);
+
+	vkGetPhysicalDeviceMemoryProperties(handle, &memoryProperties);
 
 	// Get max number of samples
 	for (VkSampleCountFlagBits sampleCount = VK_SAMPLE_COUNT_64_BIT;
@@ -75,7 +87,7 @@ auto PhysicalDeviceResource::FilterSupported(std::span<char const*> extensions) 
 				return true; 
 			} else {
 				VB_LOG_WARN("Extension %s not supported on device %s",
-					extension, physicalProperties2.properties.deviceName);
+					extension, properties.get<vk::PhysicalDeviceProperties2>().properties.deviceName);
 				return false;
 			}
 		});
@@ -89,6 +101,40 @@ auto PhysicalDeviceResource::SupportsExtensions(std::span<char const*> extension
 				return std::string_view(availableExtension.extensionName) == extension;
 			});
 	});
+}
+
+auto PhysicalDeviceResource::SupportsRequiredFeatures() -> bool {
+	vk::PhysicalDeviceFeatures const& physicalDeviceFeatures = features.get<vk::PhysicalDeviceFeatures2>().features;
+	vk::PhysicalDeviceVulkan11Features const& vulkan11Features = features.get<vk::PhysicalDeviceVulkan11Features>();
+	vk::PhysicalDeviceVulkan12Features const& vulkan12Features = features.get<vk::PhysicalDeviceVulkan12Features>();
+	vk::PhysicalDeviceVulkan13Features const& vulkan13Features = features.get<vk::PhysicalDeviceVulkan13Features>();
+
+	if (physicalDeviceFeatures.geometryShader &&
+		physicalDeviceFeatures.sampleRateShading &&
+		physicalDeviceFeatures.logicOp &&
+		physicalDeviceFeatures.depthClamp &&
+		physicalDeviceFeatures.fillModeNonSolid &&
+		physicalDeviceFeatures.wideLines &&
+		physicalDeviceFeatures.multiViewport &&
+		physicalDeviceFeatures.samplerAnisotropy &&
+		// descriptor indexing
+		vulkan12Features.shaderUniformBufferArrayNonUniformIndexing &&
+		vulkan12Features.shaderSampledImageArrayNonUniformIndexing &&
+		vulkan12Features.shaderStorageBufferArrayNonUniformIndexing &&
+		vulkan12Features.descriptorBindingSampledImageUpdateAfterBind &&
+		vulkan12Features.descriptorBindingStorageImageUpdateAfterBind &&
+		vulkan12Features.descriptorBindingPartiallyBound &&
+		vulkan12Features.runtimeDescriptorArray &&
+		// buffer device address
+		vulkan12Features.bufferDeviceAddress &&
+		// dynamic rendering
+		vulkan13Features.dynamicRendering &&
+		// synchronization2
+		vulkan13Features.synchronization2 &&
+		features.get<vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>().extendedDynamicState) {
+		return true;
+	}
+	return false;
 }
 
 auto PhysicalDeviceResource::GetQueueFamilyIndex(const QueueFamilyIndexRequest& params) -> u32 {
@@ -158,7 +204,7 @@ auto PhysicalDeviceResource::GetQueueFamilyIndex(const QueueFamilyIndexRequest& 
 }
 
 auto PhysicalDeviceResource::GetName() const -> char const* {
-	return physicalProperties2.properties.deviceName;
+	return properties.get<vk::PhysicalDeviceProperties2>().properties.deviceName;
 }
 
 auto PhysicalDeviceResource::GetType() const -> char const* {

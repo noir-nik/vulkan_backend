@@ -67,8 +67,9 @@ auto LoadShader(Pipeline::Stage const& stage) -> std::vector<char> {
 	std::filesystem::path const shader_path = stage.source.data;
 	std::filesystem::path out_file_path = out_file;
 	out_file_path = out_file_path.parent_path();
-	bool compilation_required = !stage.allow_skip_compilation;
-	
+	bool compilation_required =
+		(stage.flags & Pipeline::Stage::Flags::kAllowSkipCompilation) != Pipeline::Stage::Flags::kAllowSkipCompilation;
+
 	if (!std::filesystem::exists(out_file_path)){
 		std::filesystem::create_directories(out_file_path);
 	}

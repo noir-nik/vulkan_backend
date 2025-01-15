@@ -3,7 +3,6 @@
 
 #ifndef VB_USE_STD_MODULE
 #include <set>
-#include <string_view>
 #elif defined(VB_DEV)
 import std;
 #endif
@@ -31,7 +30,6 @@ import vk_mem_alloc;
 #include "base.hpp"
 #include "queue.hpp"
 #include "pipeline_library.hpp"
-#include "../util.hpp"
 
 namespace VB_NAMESPACE {
 struct DeviceResource : ResourceBase<InstanceResource>, std::enable_shared_from_this<DeviceResource> {
@@ -61,23 +59,20 @@ struct DeviceResource : ResourceBase<InstanceResource>, std::enable_shared_from_
 
 	std::unordered_map<SamplerInfo, VkSampler, SamplerHash, SamplerHash> samplers;
 
+	bool bHasPipelineLibrary = false;
 	PipelineLibrary pipelineLibrary;
 
 	u8* stagingCpu = nullptr;
 	u32 stagingOffset = 0;
 	Buffer staging;
 	
-	std::vector<char const*> requiredExtensions = { // Physical Device Extensions
-		// VK_KHR_SWAPCHAIN_EXTENSION_NAME,
-		// VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME,
-		// VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME,
-		// VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME,
-		// VK_KHR_RAY_QUERY_EXTENSION_NAME,
-		// VK_EXT_SHADER_ATOMIC_FLOAT_EXTENSION_NAME,
-	};
+	std::vector<char const*> requiredExtensions;
 
 	void Create(DeviceInfo const& info);
-
+	void LogWhyNotCreated(DeviceInfo const& info) const;
+	// Do not assume the size of the returned buffer,
+	// it may be larger than the requested size due to alignment,
+	// get it with GetSize()
 	auto CreateBuffer(BufferInfo const& info) -> Buffer;
 	auto CreateImage(ImageInfo const& info)   -> Image;
 	auto CreatePipeline(PipelineInfo const& info)         -> Pipeline;

@@ -1,4 +1,4 @@
-TARGET := vector_add
+TARGET := vector_addition
 
 AR := ar
 ARFLAGS = rcs
@@ -12,6 +12,10 @@ VB_SRC := ../../src
 
 ifeq ($(BUILD_DIR),)
 	BUILD_DIR := .
+endif
+
+ifeq ($(BUILD_TYPE),)
+	BUILD_TYPE := Release
 endif
 
 EXAMPLE_OBJS := $(patsubst %.cpp, $(BUILD_DIR)/%.o, $(EXAMPLE_SRCS))
@@ -35,7 +39,14 @@ VULKAN_HPP_FLAGS = \
     -DVULKAN_HPP_NO_CONSTRUCTORS \
     -DVULKAN_HPP_NO_UNION_CONSTRUCTORS
 
-CXXFLAGS := -MMD -MP -std=c++20 $(INCLUDE) $(WARNINGS_DISABLE) -g -ggdb $(VULKAN_HPP_FLAGS)
+CXXFLAGS := -MMD -MP -std=c++20 $(INCLUDE) $(WARNINGS_DISABLE) $(VULKAN_HPP_FLAGS)
+
+ifeq ($(BUILD_TYPE),Debug)
+	CXXFLAGS += -g -ggdb -O0
+else
+	CXXFLAGS += -O3
+endif
+
 # LDFLAGS := -lvulkan_backend
 # -l:vulkan_backend.a 
 
@@ -79,3 +90,6 @@ rm:
 	$(TARGET)
 
 -include $(DEPFILES)
+
+# Example coomand
+# make BUILD_DIR=build BUILD_TYPE=Debug -j8

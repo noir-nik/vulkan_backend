@@ -39,7 +39,7 @@ void MessageCallbackDefault(LogLevel level, char const* message) {
 	std::printf("%s\n", message);
 }
 
-void SendMessage(void (&callback)(LogLevel, char const*), LogLevel level, char const* format, ...) {
+void SendMessageToCallback(void (&callback)(LogLevel, char const*), LogLevel level, char const* format, ...) {
 	char buffer[kMessageBufferSize];
 	va_list args;
 	va_start(args, format);

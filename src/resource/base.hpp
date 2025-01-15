@@ -16,6 +16,8 @@ import std;
 #include "../macros.hpp"
 
 namespace VB_NAMESPACE {
+template <typename Owner>
+struct ResourceDeleter;
 
 u32 constexpr inline kNullResourceID = ~0u;
 
@@ -29,7 +31,10 @@ public:
 	auto GetName() -> char const* {return name.data();};
 	virtual auto GetInstance() const -> InstanceResource* = 0;
 	virtual auto GetType() const -> char const* = 0;
+protected:
 	virtual void Free() = 0;
+	friend ResourceDeleter<Owner>;
+	friend Owner;
 };
 
 template <typename Owner>

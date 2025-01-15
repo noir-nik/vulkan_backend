@@ -8,6 +8,8 @@ if(VB_USE_STD_MODULE)
 set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD "0e5b6991-d74f-4b3d-a41c-cf096e0b2508")
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_MODULE_STD 1)
+else()
+set(CMAKE_CXX_STANDARD 20)
 endif()
 
 project(vulkan_backend LANGUAGES CXX)
@@ -130,3 +132,6 @@ if (${VB_USE_VULKAN_MODULE})
 	target_compile_definitions(VulkanHppModule PUBLIC ${VULKAN_HPP_DEFINITIONS})
 
 endif()
+
+# Example command for compiling with C++ modules and clang
+# cmake . -B build -G Ninja -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_CXX_FLAGS=-stdlib=libc++ -DVB_USE_STD_MODULE=ON -DVB_USE_VULKAN_MODULE=ON -DVB_BUILD_CPP_MODULE=ON -DVB_BUILD_EXAMPLES=ON

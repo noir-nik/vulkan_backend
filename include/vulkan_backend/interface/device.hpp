@@ -16,6 +16,17 @@ import std;
 VB_EXPORT
 namespace VB_NAMESPACE {
 struct DeviceInfo {
+	enum class Extension {
+		kSwapchain,
+		kCooperativeMatrix2,
+		kPipelineLibrary,
+		kGraphicsPipelineLibrary, // Implies kPipelineLibrary
+	};
+
+	enum class Feature {
+		kUnusedAttachments,
+	};
+
 	// Default staging buffer size
 	u32 static constexpr inline kStagingSize = 64 * 1024 * 1024;
 	
@@ -23,19 +34,31 @@ struct DeviceInfo {
 	// This is extracted to static member, because 
 	// libc++ on linux does not support P1394R4, so we can not use 
 	// std::span range constructor
-	QueueInfo static constexpr inline kQueuesDefault[] = {
+	QueueInfo static constexpr inline kDefaultQueues[] = {
 		{QueueFlagBits::eGraphics}
 	};
 
-	std::span<QueueInfo const> queues = kQueuesDefault;
+	Feature static constexpr inline kDefaultFeatures[] = {
+	};
+
+	Extension static constexpr inline kDefaultOptionalExtensions[] = {
+		Extension::kGraphicsPipelineLibrary,
+	};
+
+	std::span<QueueInfo const> queues = kDefaultQueues;
 	u32 staging_buffer_size = kStagingSize;
 
-	// Graphics pipeline library
-	bool pipeline_library       = true;
-	bool link_time_optimization = true;
-		
+	// Extensions to enable and require from physical device
+	std::span<Extension const> required_extensions = {};
+
+	// Additional extensions (may be not supported by physical device)
+	std::span<Extension const> optional_extensions = kDefaultOptionalExtensions;
+
 	// Features
-	bool unused_attachments     = false;
+	std::span<Feature const> required_features = {};
+
+	// Optional features
+	std::span<Feature const> optional_features = {};
 };
 
 class Device {
@@ -71,6 +94,8 @@ public:
 
 	auto GetQueue(QueueInfo const& info = {}) -> Queue;
 	auto GetQueues() -> std::span<Queue>;
+
+	operator bool() const { return resource != nullptr; }
 	
 private:
 	std::shared_ptr<DeviceResource> resource;

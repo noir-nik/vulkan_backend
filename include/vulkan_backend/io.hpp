@@ -25,7 +25,7 @@ auto StringFromVkResult(Result result) -> char const*;
 } // namespace VB_NAMESPACE
 
 namespace VB_NAMESPACE {
-void SendMessage(void (&callback)(LogLevel, char const*), LogLevel level, char const* format, ...);
+void SendMessageToCallback(void (&callback)(LogLevel, char const*), LogLevel level, char const* format, ...);
 } // namespace VB_NAMESPACE
 
 #endif // VULKAN_BACKEND_IO_HPP_

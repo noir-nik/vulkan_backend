@@ -22,7 +22,7 @@ void PipelineResource::CreateLayout(std::span<VkDescriptorSetLayout const> descr
 	VkPushConstantRange pushConstant{
 		.stageFlags = VK_SHADER_STAGE_ALL,
 		.offset     = 0,
-		.size       = owner->physicalDevice->physicalProperties2.properties.limits.maxPushConstantsSize,
+		.size       = owner->physicalDevice->properties.get<vk::PhysicalDeviceProperties2>().properties.limits.maxPushConstantsSize,
 	};
 
 	VkPipelineLayoutCreateInfo pipelineLayoutInfo{

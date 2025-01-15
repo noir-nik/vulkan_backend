@@ -2,7 +2,6 @@
 #define VULKAN_BACKEND_RESOURCE_PHYSICAL_DEVICE_HPP_
 
 #ifndef VB_USE_STD_MODULE
-#include <set>
 #include <string_view>
 #else
 import std;
@@ -19,17 +18,27 @@ struct PhysicalDeviceResource : NoCopy {
 	VkPhysicalDevice handle = VK_NULL_HANDLE;
 
 	// Features
-	VkPhysicalDeviceDynamicRenderingUnusedAttachmentsFeaturesEXT unusedAttachmentFeatures;
-	VkPhysicalDeviceGraphicsPipelineLibraryFeaturesEXT graphicsPipelineLibraryFeatures;
-	VkPhysicalDeviceBufferDeviceAddressFeatures bufferDeviceAddressFeatures;
-	VkPhysicalDeviceSynchronization2FeaturesKHR synchronization2Features;
-	VkPhysicalDeviceDynamicRenderingFeatures dynamicRenderingFeatures;
-	VkPhysicalDeviceDescriptorIndexingFeatures indexingFeatures;
-	VkPhysicalDeviceFeatures2 physicalFeatures2;
+	using FeaturesChain = vk::StructureChain<
+		vk::PhysicalDeviceFeatures2,
+		vk::PhysicalDeviceVulkan11Features,
+		vk::PhysicalDeviceVulkan12Features,
+		vk::PhysicalDeviceVulkan13Features,
+#ifdef VK_VERSION_1_4
+		vk::PhysicalDeviceVulkan14Features,
+#endif
+		vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT,
+		vk::PhysicalDeviceGraphicsPipelineLibraryFeaturesEXT,
+		vk::PhysicalDeviceDynamicRenderingUnusedAttachmentsFeaturesEXT>;
+
+	FeaturesChain features;
 
 	// Properties
-	VkPhysicalDeviceGraphicsPipelineLibraryPropertiesEXT graphicsPipelineLibraryProperties;
-	VkPhysicalDeviceProperties2 physicalProperties2;
+	using PropertiesChain = vk::StructureChain<
+		vk::PhysicalDeviceProperties2,
+		vk::PhysicalDeviceGraphicsPipelineLibraryPropertiesEXT,
+		vk::PhysicalDeviceSubgroupProperties>;
+	PropertiesChain properties;
+
 	VkPhysicalDeviceMemoryProperties memoryProperties;
 
 	// Extensions
@@ -54,15 +63,13 @@ struct PhysicalDeviceResource : NoCopy {
 		};
 		// Default avoid flags for compute, transfer and all other queues
 		// to select the best queue
-		AvoidInfo static constexpr inline kAvoidCompute[] = {
-			{VK_QUEUE_GRAPHICS_BIT, 1.0f}, {VK_QUEUE_TRANSFER_BIT, 0.5f}
-		};
-		AvoidInfo static constexpr inline kAvoidTransfer[] = {
-			{VK_QUEUE_GRAPHICS_BIT, 1.0f}, {VK_QUEUE_COMPUTE_BIT, 0.5f}
-		};
-		AvoidInfo static constexpr inline kAvoidOther[] = {
-			{VK_QUEUE_GRAPHICS_BIT, 1.0f}
-		};
+		AvoidInfo static constexpr inline kAvoidCompute[] = 
+			{{VK_QUEUE_GRAPHICS_BIT, 1.0f}, {VK_QUEUE_TRANSFER_BIT, 0.5f}};
+		AvoidInfo static constexpr inline kAvoidTransfer[] = 
+			{{VK_QUEUE_GRAPHICS_BIT, 1.0f}, {VK_QUEUE_COMPUTE_BIT, 0.5f}};
+		AvoidInfo static constexpr inline kAvoidOther[] = 
+			{{VK_QUEUE_GRAPHICS_BIT, 1.0f}};
+
 		VkQueueFlags desiredFlags;
 		VkQueueFlags undesiredFlags;
 		std::span<AvoidInfo const> avoidIfPossible = {};
@@ -78,6 +85,8 @@ struct PhysicalDeviceResource : NoCopy {
 	void GetDetails();
 	auto FilterSupported(std::span<char const*> extensions) -> std::vector<std::string_view>;
 	auto SupportsExtensions(std::span<char const*> extensions) -> bool;
+	auto SupportsRequiredFeatures() -> bool;
+
 	PhysicalDeviceResource(InstanceResource* instance, VkPhysicalDevice handle = VK_NULL_HANDLE)
 		: instance(instance), handle(handle) {};
 

@@ -35,22 +35,22 @@
 
 #ifndef VB_LOG_TRACE
 #define VB_LOG_TRACE(fmt, ...) \
-	SendMessage(GetInstance()->init_info.message_callback, LogLevel::Trace, fmt, ## __VA_ARGS__)
+	SendMessageToCallback(GetInstance()->init_info.message_callback, LogLevel::Trace, fmt, ## __VA_ARGS__)
 #endif
 
 #ifndef VB_LOG_INFO
 #define VB_LOG_INFO(fmt, ...) \
-	SendMessage(GetInstance()->init_info.message_callback, LogLevel::Info, fmt, ## __VA_ARGS__)
+	SendMessageToCallback(GetInstance()->init_info.message_callback, LogLevel::Info, fmt, ## __VA_ARGS__)
 #endif
 
 #ifndef VB_LOG_WARN
 #define VB_LOG_WARN(fmt, ...) \
-	SendMessage(GetInstance()->init_info.message_callback, LogLevel::Warning, fmt, ## __VA_ARGS__)
+	SendMessageToCallback(GetInstance()->init_info.message_callback, LogLevel::Warning, fmt, ## __VA_ARGS__)
 #endif
 
 #ifndef VB_LOG_ERROR
 #define VB_LOG_ERROR(fmt, ...) \
-	SendMessage(GetInstance()->init_info.message_callback, LogLevel::Error, fmt, ## __VA_ARGS__)
+	SendMessageToCallback(GetInstance()->init_info.message_callback, LogLevel::Error, fmt, ## __VA_ARGS__)
 #endif
 
 #endif // !VB_NO_LOG

@@ -65,9 +65,7 @@ auto Device::CreateImage(ImageInfo const& info) -> Image {
 
 auto Device::CreatePipeline(PipelineInfo const& info) -> Pipeline {
 	VB_ASSERT(info.stages.size() > 0, "Pipeline should have at least one stage!");
-	if (info.point == PipelinePoint::eGraphics &&
-			resource->init_info.pipeline_library &&
-				resource->physicalDevice->graphicsPipelineLibraryFeatures.graphicsPipelineLibrary) {
+	if (info.point == PipelinePoint::eGraphics && resource->bHasPipelineLibrary) {
 		return resource->pipelineLibrary.CreatePipeline(info);
 	}
 	return resource->CreatePipeline(info);
@@ -150,87 +148,129 @@ auto Device::GetQueues() -> std::span<Queue> {
 	return resource->queues;
 }
 
-#pragma region Resource
-void DeviceResource::Create(DeviceInfo const& info) {
-	init_info = info;
-	pipelineLibrary.device = this;
-	// <family index, queue count>
-	// VB_VLA(u32, numQueuesToCreate, physicalDevice->availableFamilies.size());
-	std::vector<u32> numQueuesToCreate;
-	// std::fill(numQueuesToCreate.begin(), numQueuesToCreate.end(), 0);
-
-	// Add swapchain extension
-		if (std::any_of( info.queues.begin(), info.queues.end(),
-				[](QueueInfo const &q) { return bool(q.supported_surface); })) {
-			requiredExtensions.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
+auto SupportsFeatures(PhysicalDeviceResource const& physicalDevice, std::span<DeviceInfo::Feature const> features) -> bool {
+	return std::all_of(features.begin(), features.end(), [&physicalDevice](auto const& feature) {
+		switch (feature) {
+		case DeviceInfo::Feature::kUnusedAttachments:
+			return physicalDevice.features.get<vk::PhysicalDeviceDynamicRenderingUnusedAttachmentsFeaturesEXT>()
+				.dynamicRenderingUnusedAttachments;
+		default:
+			VB_ASSERT(false, "Unsupported feature");
+			return vk::False;
 		}
+	});
+}
 
-		for (auto& physicalDevice : owner->physicalDevices) {
-			// Require extension support
-			if (!physicalDevice.SupportsExtensions(requiredExtensions)) {
+// Selects a physical device from the given instance and checks if it supports the required extensions and queues.
+// Returns the physical device and vector[family_index] = <number of queues to create>
+auto SelectPhysicalDevice(InstanceResource* instance,
+						  std::span<char const*> extensions,
+						  DeviceInfo const& info) -> std::pair<PhysicalDeviceResource*, std::vector<u32>> {
+	std::vector<u32> numQueuesToCreate;
+	auto GetInstance = [instance] { return instance; };
+
+	for (auto& physicalDevice : instance->physicalDevices) {
+		// Require extension support
+		if (!physicalDevice.SupportsExtensions(extensions) ||
+			!physicalDevice.SupportsRequiredFeatures() ||
+			!SupportsFeatures(physicalDevice, info.required_features)) {
+			continue;
+		}
+		numQueuesToCreate.resize(physicalDevice.availableFamilies.size(), 0);
+
+		bool deviceSuitable = true;
+		for (auto& queue_info : info.queues) {
+			// Queue choosing heuristics
+			using AvoidInfo = PhysicalDeviceResource::QueueFamilyIndexRequest::AvoidInfo;
+			std::span<AvoidInfo const> avoid_if_possible;
+			if (queue_info.separate_family) {
+				switch (QueueFlags::MaskType(queue_info.flags)) {
+				case VK_QUEUE_COMPUTE_BIT: 
+					avoid_if_possible = PhysicalDeviceResource::QueueFamilyIndexRequest::kAvoidCompute;
+					break;
+				case VK_QUEUE_TRANSFER_BIT:
+					avoid_if_possible = PhysicalDeviceResource::QueueFamilyIndexRequest::kAvoidTransfer;
+					break;
+				default:
+					avoid_if_possible = PhysicalDeviceResource::QueueFamilyIndexRequest::kAvoidOther;
+					break;
+				}
+			}
+			// Get family index fitting requirements
+			PhysicalDeviceResource::QueueFamilyIndexRequest request{
+				.desiredFlags = VkQueueFlags(queue_info.flags),
+				.undesiredFlags = 0,
+				.avoidIfPossible = avoid_if_possible,			
+				.numTakenQueues = numQueuesToCreate
+			};
+			if (queue_info.supported_surface) {
+				request.surfaceToSupport = queue_info.supported_surface;
+			}
+
+			auto familyIndex = physicalDevice.GetQueueFamilyIndex(request);
+			if (familyIndex == PhysicalDeviceResource::QUEUE_NOT_FOUND) {
+				VB_LOG_WARN("Requested queue flags %d not available on device: %s",
+					QueueFlags::MaskType(queue_info.flags), physicalDevice.properties.get<vk::PhysicalDeviceProperties2>().properties.deviceName);
+				deviceSuitable = false;
+				break;
+			} else if (familyIndex == PhysicalDeviceResource::ALL_SUITABLE_QUEUES_TAKEN) {
+				VB_LOG_WARN("Requested more queues with flags %d than available on device: %s. Queue was not created",
+					QueueFlags::MaskType(queue_info.flags), physicalDevice.properties.get<vk::PhysicalDeviceProperties2>().properties.deviceName);
 				continue;
 			}
-			numQueuesToCreate.resize(physicalDevice.availableFamilies.size(), 0);
-			// std::fill(numQueuesToCreate.begin(), numQueuesToCreate.end(), 0);
-
-			bool deviceSuitable = true;
-			for (auto& queue_info: info.queues) {
-				// Queue choosing heuristics
-				using AvoidInfo = PhysicalDeviceResource::QueueFamilyIndexRequest::AvoidInfo;
-				std::span<AvoidInfo const> avoid_if_possible;
-				if(queue_info.separate_family) {
-					switch (QueueFlags::MaskType(queue_info.flags)) {
-					case VK_QUEUE_COMPUTE_BIT: 
-						avoid_if_possible = PhysicalDeviceResource::QueueFamilyIndexRequest::kAvoidCompute;
-						break;
-					case VK_QUEUE_TRANSFER_BIT:
-						avoid_if_possible = PhysicalDeviceResource::QueueFamilyIndexRequest::kAvoidTransfer;
-						break;
-					default:
-						avoid_if_possible = PhysicalDeviceResource::QueueFamilyIndexRequest::kAvoidOther;
-						break;
-					}
-				}
-
-				// Get family index fitting requirements
-				PhysicalDeviceResource::QueueFamilyIndexRequest request{
-					.desiredFlags = VkQueueFlags(queue_info.flags),
-					.undesiredFlags = 0,
-					.avoidIfPossible = avoid_if_possible,			
-					.numTakenQueues = numQueuesToCreate
-				};
-
-				if (queue_info.supported_surface) {
-					request.surfaceToSupport = queue_info.supported_surface;
-				}
-
-				auto familyIndex = physicalDevice.GetQueueFamilyIndex(request);
-				if (familyIndex == PhysicalDeviceResource::QUEUE_NOT_FOUND) {
-					VB_LOG_WARN("Requested queue flags %d not available on device: %s",
-						QueueFlags::MaskType(queue_info.flags), physicalDevice.physicalProperties2.properties.deviceName);
-					deviceSuitable = false;
-					break;
-				} else if (familyIndex == PhysicalDeviceResource::ALL_SUITABLE_QUEUES_TAKEN) {
-					VB_LOG_WARN("Requested more queues with flags %d than available on device: %s. Queue was not created",
-						QueueFlags::MaskType(queue_info.flags), physicalDevice.physicalProperties2.properties.deviceName);
-					continue;
-				}
-				// Create queue
-				numQueuesToCreate[familyIndex]++;
-			}
+			// Create queue
+			numQueuesToCreate[familyIndex]++;
+		}
 		if (deviceSuitable) {
-			this->physicalDevice = &physicalDevice;
+			return {&physicalDevice, std::move(numQueuesToCreate)};
 			break;
 		}
 	}
+	return {nullptr, {}};
+}
 
-	// if (this->physicalDevice == nullptr) {
-	// 	VB_LOG_ERROR("Failed to find suitable device");
-	// 	// return;
-	// }
-	VB_ASSERT(this->physicalDevice != nullptr, "Failed to find suitable device");
+auto TranslateExtensions(std::span<DeviceInfo::Extension const> extensions) -> std::vector<char const*> {
+	std::vector<char const*> result;
+	result.reserve(extensions.size());
+	for (auto const extension : extensions) {
+		switch (extension) {
+		case DeviceInfo::Extension::kSwapchain:               result.push_back(vk::KHRSwapchainExtensionName);               break;
+		case DeviceInfo::Extension::kCooperativeMatrix2:      result.push_back(vk::NVCooperativeMatrix2ExtensionName);       break;
+		case DeviceInfo::Extension::kPipelineLibrary:         result.push_back(vk::KHRPipelineLibraryExtensionName);         break;
+		case DeviceInfo::Extension::kGraphicsPipelineLibrary: result.push_back(vk::EXTGraphicsPipelineLibraryExtensionName); break;
+		}
+	}
+	return result;
+}
 
-	name += physicalDevice->physicalProperties2.properties.deviceName;
+void DeviceResource::LogWhyNotCreated(DeviceInfo const& info) const {
+	VB_LOG_WARN("Could not create device with info"); // todo:: give reason
+}
+
+#pragma region Resource
+void DeviceResource::Create(DeviceInfo const& info) {
+	requiredExtensions = TranslateExtensions(info.required_extensions);
+	init_info = info;
+	pipelineLibrary.device = this;
+
+	// Add swapchain extension
+	if (std::any_of(info.queues.begin(), info.queues.end(),
+					[](QueueInfo const& q) { return bool(q.supported_surface); })) {
+		if (std::find_if(requiredExtensions.begin(), requiredExtensions.end(), [](char const* extension) {
+				return extension == std::string_view(vk::KHRSwapchainExtensionName);
+			}) == requiredExtensions.end())
+			requiredExtensions.push_back(vk::KHRSwapchainExtensionName);
+	}
+
+	std::vector<u32> numQueuesToCreate;
+	std::tie(this->physicalDevice, numQueuesToCreate) = SelectPhysicalDevice(GetInstance(), requiredExtensions, info);
+
+	if (this->physicalDevice == nullptr) [[unlikely]] {
+		LogWhyNotCreated(info);
+		VB_ASSERT(false, "Failed to find suitable device");
+		return;
+	}
+	name += physicalDevice->properties.get<vk::PhysicalDeviceProperties2>().properties.deviceName.data();
 
 	u32 maxQueuesInFamily = 0;
 	for (auto& family: physicalDevice->availableFamilies) {
@@ -242,10 +282,8 @@ void DeviceResource::Create(DeviceInfo const& info) {
 	// priority for each type of queue (1.0f for all)
 	VB_VLA(float, priorities, maxQueuesInFamily);
 	std::fill(priorities.begin(), priorities.end(), 1.0f);
-
-	int numFamilies = std::count_if(numQueuesToCreate.begin(), numQueuesToCreate.end(), [](int queueCount) {
-		return queueCount > 0;
-    });
+	int numFamilies = std::count_if(numQueuesToCreate.begin(), numQueuesToCreate.end(),
+									[](int queueCount) { return queueCount > 0; });
 
 	VB_VLA(VkDeviceQueueCreateInfo, queueCreateInfos, numFamilies);
 	for (u32 queueInfoIndex{}, familyIndex{}; familyIndex < numQueuesToCreate.size(); ++familyIndex) {
@@ -259,24 +297,40 @@ void DeviceResource::Create(DeviceInfo const& info) {
 		++queueInfoIndex;
 	}
 
-	auto& supportedFeatures = physicalDevice->physicalFeatures2.features;
 	VkPhysicalDeviceFeatures2 features2 {
 		.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
 		.features = {
-			.geometryShader    = supportedFeatures.geometryShader,
-			.sampleRateShading = supportedFeatures.sampleRateShading,
-			.logicOp           = supportedFeatures.logicOp,
-			.depthClamp        = supportedFeatures.depthClamp,
-			.fillModeNonSolid  = supportedFeatures.fillModeNonSolid,
-			.wideLines         = supportedFeatures.wideLines,
-			.multiViewport     = supportedFeatures.multiViewport,
-			.samplerAnisotropy = supportedFeatures.samplerAnisotropy,
+			.geometryShader    = true,
+			.sampleRateShading = true,
+			.logicOp           = true,
+			.depthClamp        = true,
+			.fillModeNonSolid  = true,
+			.wideLines         = true,
+			.multiViewport     = true,
+			.samplerAnisotropy = true,
 		}
 	};
 
 	// request features if available
+	auto ExtensionRequested = [this](DeviceInfo::Extension extension) {
+		return std::any_of(init_info.required_extensions.begin(), init_info.required_extensions.end(),
+						   [extension](DeviceInfo::Extension const& e) { return e == extension; }) ||
+			   std::any_of(init_info.optional_extensions.begin(), init_info.optional_extensions.end(),
+						   [extension](DeviceInfo::Extension const& e) { return e == extension; });
+	};
+
+	auto FeatureRequested = [this](DeviceInfo::Feature feature) {
+		return std::any_of(init_info.required_features.begin(), init_info.required_features.end(),
+						   [feature](DeviceInfo::Feature const& f) { return f == feature; }) ||
+			   std::any_of(init_info.optional_features.begin(), init_info.optional_features.end(),
+						   [feature](DeviceInfo::Feature const& f) { return f == feature; });
+	};
+
+	bool enable_pipeline_library =
+		ExtensionRequested(DeviceInfo::Extension::kGraphicsPipelineLibrary) &&
+		physicalDevice->features.get<vk::PhysicalDeviceGraphicsPipelineLibraryFeaturesEXT>().graphicsPipelineLibrary;
 	VkPhysicalDeviceGraphicsPipelineLibraryFeaturesEXT graphicsPipelineLibraryFeatures;
-	if (init_info.pipeline_library && physicalDevice->graphicsPipelineLibraryFeatures.graphicsPipelineLibrary) {
+	if (enable_pipeline_library) {
 		graphicsPipelineLibraryFeatures = {
 			.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_GRAPHICS_PIPELINE_LIBRARY_FEATURES_EXT,
 			.pNext = features2.pNext,
@@ -285,23 +339,24 @@ void DeviceResource::Create(DeviceInfo const& info) {
 		requiredExtensions.push_back(VK_KHR_PIPELINE_LIBRARY_EXTENSION_NAME);
 		requiredExtensions.push_back(VK_EXT_GRAPHICS_PIPELINE_LIBRARY_EXTENSION_NAME);
 	}
+	this->bHasPipelineLibrary = enable_pipeline_library;
 
-	VkPhysicalDeviceDescriptorIndexingFeatures descriptorIndexingFeatures = {
+	VkPhysicalDeviceDescriptorIndexingFeatures descriptorIndexingFeatures{
 		.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES,
 		.pNext = features2.pNext,
-		.shaderUniformBufferArrayNonUniformIndexing   = physicalDevice->indexingFeatures.shaderUniformBufferArrayNonUniformIndexing,
-		.shaderSampledImageArrayNonUniformIndexing    = physicalDevice->indexingFeatures.shaderSampledImageArrayNonUniformIndexing,
-		.shaderStorageBufferArrayNonUniformIndexing   = physicalDevice->indexingFeatures.shaderStorageBufferArrayNonUniformIndexing,
-		.descriptorBindingSampledImageUpdateAfterBind = physicalDevice->indexingFeatures.descriptorBindingSampledImageUpdateAfterBind,
-		.descriptorBindingStorageImageUpdateAfterBind = physicalDevice->indexingFeatures.descriptorBindingStorageImageUpdateAfterBind,
-		.descriptorBindingPartiallyBound              = physicalDevice->indexingFeatures.descriptorBindingPartiallyBound,
-		.runtimeDescriptorArray                       = physicalDevice->indexingFeatures.runtimeDescriptorArray,
+		.shaderUniformBufferArrayNonUniformIndexing   = true,
+		.shaderSampledImageArrayNonUniformIndexing    = true,
+		.shaderStorageBufferArrayNonUniformIndexing   = true,
+		.descriptorBindingSampledImageUpdateAfterBind = true,
+		.descriptorBindingStorageImageUpdateAfterBind = true,
+		.descriptorBindingPartiallyBound              = true,
+		.runtimeDescriptorArray                       = true,
 	}; features2.pNext = &descriptorIndexingFeatures;
 
 	VkPhysicalDeviceBufferDeviceAddressFeatures addresFeatures{
 		.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES,
 		.pNext = features2.pNext,
-		.bufferDeviceAddress = physicalDevice->bufferDeviceAddressFeatures.bufferDeviceAddress,
+		.bufferDeviceAddress = true,
 	}; features2.pNext = &addresFeatures;
 
 	// VkPhysicalDeviceRayTracingPipelineFeaturesKHR rayTracingPipelineFeatures{};
@@ -322,16 +377,19 @@ void DeviceResource::Create(DeviceInfo const& info) {
 	// // rayQueryFeatures.pNext = &accelerationStructureFeatures;
 	// rayQueryFeatures.pNext = &addresFeatures;
 
-
-
 	VkPhysicalDeviceDynamicRenderingFeatures dynamicRenderingFeatures{
 		.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_FEATURES_KHR,
 		.pNext = features2.pNext,
-		.dynamicRendering = physicalDevice->dynamicRenderingFeatures.dynamicRendering,
+		.dynamicRendering = true,
 	}; features2.pNext = &dynamicRenderingFeatures;
 
 	VkPhysicalDeviceDynamicRenderingUnusedAttachmentsFeaturesEXT unusedAttachmentFeatures;
-	if (init_info.unused_attachments && physicalDevice->unusedAttachmentFeatures.dynamicRenderingUnusedAttachments) {
+	bool enable_unused_attachments =
+		FeatureRequested(DeviceInfo::Feature::kUnusedAttachments) &&
+		physicalDevice->features.get<vk::PhysicalDeviceDynamicRenderingUnusedAttachmentsFeaturesEXT>()
+			.dynamicRenderingUnusedAttachments;
+
+	if (enable_unused_attachments) {
 		unusedAttachmentFeatures = {
 			.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_UNUSED_ATTACHMENTS_FEATURES_EXT,
 			.pNext = features2.pNext,
@@ -343,7 +401,7 @@ void DeviceResource::Create(DeviceInfo const& info) {
 	VkPhysicalDeviceSynchronization2FeaturesKHR sync2Features{
 		.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES_KHR,
 		.pNext = features2.pNext,
-		.synchronization2 = physicalDevice->synchronization2Features.synchronization2,
+		.synchronization2 = true,
 	}; features2.pNext = &sync2Features;
 
 	// VkPhysicalDeviceShaderAtomicFloatFeaturesEXT atomicFeatures{};
@@ -369,7 +427,7 @@ void DeviceResource::Create(DeviceInfo const& info) {
 
 	VB_VK_RESULT result = vkCreateDevice(physicalDevice->handle, &createInfo, owner->allocator, &handle);
 	VB_CHECK_VK_RESULT(owner->init_info.checkVkResult, result, "Failed to create logical device!");
-	VB_LOG_TRACE("Created logical device, name = %s", physicalDevice->physicalProperties2.properties.deviceName);
+	VB_LOG_TRACE("Created logical device, name = %s", physicalDevice->properties.get<vk::PhysicalDeviceProperties2>().properties.deviceName.data());
 
 	queuesResources.reserve(std::reduce(numQueuesToCreate.begin(), numQueuesToCreate.end()));
 	for (auto& info: queueCreateInfos) {
@@ -467,7 +525,7 @@ auto DeviceResource::CreateBuffer(BufferInfo const& info) -> Buffer {
 
 	if (usage & BufferUsage::eStorageBuffer) {
 		usage |= BufferUsage::eShaderDeviceAddress;
-		size += size % physicalDevice->physicalProperties2.properties.limits.minStorageBufferOffsetAlignment;
+		size += size % physicalDevice->properties.get<vk::PhysicalDeviceProperties2>().properties.limits.minStorageBufferOffsetAlignment;
 	}
 
 	if (usage & BufferUsage::eAccelerationStructureBuildInputReadOnlyKHR) {
@@ -914,9 +972,7 @@ auto DeviceResource::GetOrCreateSampler(SamplerInfo const& info) -> VkSampler {
 		.addressModeW = VkSamplerAddressMode(info.wrap.w),
 		.mipLodBias = 0.0f,
 
-		.anisotropyEnable = info.anisotropyEnable == false
-						? VK_FALSE
-						: physicalDevice->physicalFeatures2.features.samplerAnisotropy,
+		.anisotropyEnable = info.anisotropyEnable, // Device support for this is required
 		.maxAnisotropy = info.maxAnisotropy,
 		.compareEnable = info.compareEnable == false ? VK_FALSE : VK_TRUE,
 		.compareOp = VkCompareOp(info.compareOp),

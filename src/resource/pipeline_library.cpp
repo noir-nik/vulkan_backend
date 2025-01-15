@@ -1,4 +1,5 @@
 #ifndef VB_USE_STD_MODULE
+#include <algorithm>
 #else
 import std;
 #endif
@@ -52,11 +53,14 @@ auto PipelineLibrary::CreatePipeline(PipelineInfo const& info) -> Pipeline {
 	}
 
 	PipelineLibrary::PreRasterizationInfo preRasterizationInfo {
-		.pipelineLayout = pipeline.resource->layout,
+		.layout = pipeline.resource->layout,
 		.lineTopology   = info.line_topology,
 		.cullMode       = info.cullMode 
 	};
-	PipelineLibrary::FragmentShaderInfo   fragmentShaderInfo   { pipeline.resource->layout, info.samples};
+	PipelineLibrary::FragmentShaderInfo fragmentShaderInfo { 
+		.layout = pipeline.resource->layout, 
+		.samples        = info.samples
+	};
 
 	auto it_fragment = std::find_if(info.stages.begin(), info.stages.end(), [](Pipeline::Stage const& stage) {
 		return stage.stage == ShaderStage::eFragment;
@@ -75,7 +79,7 @@ auto PipelineLibrary::CreatePipeline(PipelineInfo const& info) -> Pipeline {
 	}
 
 	PipelineLibrary::FragmentOutputInfo fragmentOutputInfo {
-		.pipelineLayout = pipeline.resource->layout,
+		.layout = pipeline.resource->layout,
 		.colorFormats   = info.color_formats,
 		.useDepth       = info.use_depth,
 		.depthFormat    = info.depth_format,
@@ -92,7 +96,10 @@ auto PipelineLibrary::CreatePipeline(PipelineInfo const& info) -> Pipeline {
 			fragmentShaders[fragmentShaderInfo],
 			fragmentOutputInterfaces[fragmentOutputInfo]
 		},
-		pipeline.resource->layout
+		pipeline.resource->layout,
+		std::all_of(info.stages.begin(), info.stages.end(), [](Pipeline::Stage const& stage) {
+			return (stage.flags & Pipeline::Stage::Flags::kLinkTimeOptimization) == Pipeline::Stage::Flags::kLinkTimeOptimization;
+		})
 	);
 
 	return pipeline;
@@ -262,7 +269,7 @@ void PipelineLibrary::CreatePreRasterizationShaders(PreRasterizationInfo const& 
 		.pViewportState      = &viewportState,
 		.pRasterizationState = &rasterizationState,
 		.pDynamicState       = &dynamicInfo,
-		.layout              = info.pipelineLayout,
+		.layout              = info.layout,
 	};
 	VkPipeline pipeline;
 	VB_VK_RESULT res = vkCreateGraphicsPipelines(device->handle, device->pipelineCache, 1,
@@ -334,7 +341,7 @@ void PipelineLibrary::CreateFragmentShader(FragmentShaderInfo const& info) {
 		.pStages             = shader_stages.data(),
 		.pMultisampleState  = &multisampleState,
 		.pDepthStencilState = &depthStencilState,
-		.layout             = info.pipelineLayout,
+		.layout             = info.layout,
 	};
 
 	//todo: Thread pipeline cache
@@ -395,7 +402,7 @@ void PipelineLibrary::CreateFragmentOutputInterface(FragmentOutputInfo const& in
 		.flags             = VK_PIPELINE_CREATE_LIBRARY_BIT_KHR | VK_PIPELINE_CREATE_RETAIN_LINK_TIME_OPTIMIZATION_INFO_BIT_EXT,
 		.pMultisampleState = &multisampleState,
 		.pColorBlendState  = &colorBlendState,
-		.layout            = info.pipelineLayout,
+		.layout            = info.layout,
 	};
 
 	VkPipeline pipeline;
@@ -405,7 +412,7 @@ void PipelineLibrary::CreateFragmentOutputInterface(FragmentOutputInfo const& in
 	fragmentOutputInterfaces.emplace(info, pipeline);
 }
 
-auto PipelineLibrary::LinkPipeline(std::array<VkPipeline, 4> const& pipelines, VkPipelineLayout layout) -> VkPipeline {
+auto PipelineLibrary::LinkPipeline(std::array<VkPipeline, 4> const& pipelines, VkPipelineLayout layout, bool link_time_optimization) -> VkPipeline {
 
 	// Link the library parts into a graphics pipeline
 	VkPipelineLibraryCreateInfoKHR linkingInfo {
@@ -420,7 +427,7 @@ auto PipelineLibrary::LinkPipeline(std::array<VkPipeline, 4> const& pipelines, V
 		.layout = layout,
 	};
 
-	if (device->init_info.link_time_optimization) {
+	if (link_time_optimization) {
 		pipelineInfo.flags = VK_PIPELINE_CREATE_LINK_TIME_OPTIMIZATION_BIT_EXT;
 	}
 

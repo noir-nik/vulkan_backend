@@ -11,12 +11,6 @@ import std;
 
 #include <cassert>
 
-#ifndef VB_USE_VULKAN_MODULE
-#include <vulkan/vulkan.hpp>
-#else
-import vulkan_hpp;
-#endif
-
 #ifndef VB_BUILD_CPP_MODULE
 #include <vulkan_backend/core.hpp>
 #else

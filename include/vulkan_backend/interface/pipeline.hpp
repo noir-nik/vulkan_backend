@@ -27,6 +27,18 @@ struct Source  {
 class Pipeline {
 public:
 	struct Stage {
+		enum class Flags {
+			kNone = 0,
+			// Option to not recompile the shader if respective 'filename'.spv exists and is up-to-date.
+			// But be careful with this, because if 'compile_options' such as define macros are changed,
+			// this might use old .spv file and cause hard to find bugs
+			kAllowSkipCompilation = 1 << 1,
+			// Set link time optimization flag when using graphics pipeline library
+			// Note: to perform link time optimizations, the 'link_time_optimization' MUST be true
+			// for all pipeline libraries (stages) that are being linked together.
+			kLinkTimeOptimization = 1 << 2,
+		};
+
 		// Shader stage, e.g. Vertex, Fragment, Compute or other
 		ShaderStage const& stage;
 
@@ -46,11 +58,8 @@ public:
 		// Additional compiler options
 		std::string_view compile_options = "";
 
-		// Option to not recompile the shader if respective 'filename'.spv exists and is up-to-date.
-		// But be careful with this, because if 'compile_options' such as define macros are changed,
-		// this might use old .spv file and cause hard to find bugs
-		bool allow_skip_compilation = false;
-
+		// Flags
+		vb::Flags<Stage::Flags> flags = Stage::Flags::kLinkTimeOptimization;
 	};
 private:
 	std::shared_ptr<PipelineResource> resource;

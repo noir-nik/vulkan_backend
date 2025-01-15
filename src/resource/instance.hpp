@@ -3,7 +3,6 @@
 
 #ifndef VB_USE_STD_MODULE
 #include <set>
-#include <string_view>
 #else
 import std;
 #endif
