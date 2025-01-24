@@ -1,6 +1,7 @@
 #ifndef VB_USE_STD_MODULE
-#include <span>
 #include <numeric>
+#include <span>
+#include <utility>
 #else
 import std;
 #endif
@@ -11,143 +12,150 @@ import std;
 import vulkan_hpp;
 #endif
 
-#include "descriptor.hpp"
-#include "instance.hpp"
-#include "device.hpp"
+#include "vulkan_backend/interface/descriptor.hpp"
+#include "vulkan_backend/interface/device.hpp"
+#include "vulkan_backend/interface/instance.hpp"
+#include "vulkan_backend/log.hpp"
+#include "vulkan_backend/macros.hpp"
+#include "vulkan_backend/vk_result.hpp"
+
+
 namespace VB_NAMESPACE {
-
-auto Descriptor::GetBinding(DescriptorType type) -> u32 {
-	return resource->GetBinding(type);
+auto BindlessDescriptor::GetBindingInfo(u32 binding) const
+	-> vk::DescriptorSetLayoutBinding const& {
+	auto it = bindings.find(binding);
+	VB_ASSERT(it != bindings.end(), "Descriptor binding not found");
+	return it->second;
 }
 
-auto DescriptorResource::GetType() const -> char const* { return "DescriptorResource"; }
-
-auto DescriptorResource::GetInstance() const -> InstanceResource* { return owner->owner; }
-
-void DescriptorResource::Free() {
-	VB_LOG_TRACE("[ Free ] type = %s, name = %s", GetType(), GetName());
-	vkDestroyDescriptorPool(owner->handle, pool, owner->owner->allocator);
-	vkDestroyDescriptorSetLayout(owner->handle, layout, owner->owner->allocator);
+auto BindlessDescriptor::PopID(u32 binding) -> u32 {
+	auto it = bindings.find(binding);
+	VB_ASSERT(it != bindings.end(), "Descriptor binding not found");
+	u32 id = it->second.resource_ids.back();
+	it->second.resource_ids.pop_back();
+	return id;
 }
 
-void DescriptorResource::Create(std::span<BindingInfo const> binding_infos) {
-	std::set<u32> specified_bindings;
-	bindings.reserve(binding_infos.size());
-	for (auto const& info : binding_infos) { // todo: allow duplicate DescriptorType
-		auto [_, success] = bindings.try_emplace(info.type, info);
-		VB_ASSERT(success, "Duplicate DescriptorType in descriptor binding list");
-	}
-	for (auto const& [_, info] : bindings) {
-		if (info.binding != BindingInfo::kBindingAuto) {
-			if (!specified_bindings.insert(info.binding).second) {
-				VB_ASSERT(false, "Duplicate binding in descriptor binding list");
-			}
-		}
-	}
-	u32 next_binding = 0;
-	for (auto& [_, info] : bindings) {
-		if (info.binding == BindingInfo::kBindingAuto) {
-			while (specified_bindings.contains(next_binding)) {
-				++next_binding;
-			}
-			info.binding = next_binding;
-			// specified_bindings.insert(info.binding);
-			++next_binding;
-		}
-	}
-
-	VB_LOG_TRACE("[ Descriptor ] Selected bindings:");
-	for (auto const& [type, info] : bindings) {
-		VB_LOG_TRACE("%s: %u", vk::to_string(type).data(), info.binding);
-	}
-	// fill with reversed indices so that 0 is at the back
-	for (auto const& binding : binding_infos) {
-		auto it = bindings.find(binding.type);
-		auto& vec = it->second.resourceIDs;
-		vec.resize(binding.count);
-		std::iota(vec.rbegin(), vec.rend(), 0);
-	}
-	this->pool   = CreateDescriptorPool();
-	this->layout = CreateDescriptorSetLayout();
-	this->set    = CreateDescriptorSets();
+void BindlessDescriptor::PushID(u32 binding, u32 id) {
+	auto it = bindings.find(binding);
+	VB_ASSERT(it != bindings.end(), "Descriptor binding not found");
+	it->second.resource_ids.push_back(id);
 }
 
-auto DescriptorResource::CreateDescriptorPool() -> VkDescriptorPool {
-	VB_VLA(VkDescriptorPoolSize, pool_sizes, bindings.size());
-	for (u32 i = 0; auto const& [type, binding] : bindings) {
-		pool_sizes[i] = {static_cast<VkDescriptorType>(type), binding.count};
+void Descriptor::Free() {
+	VB_LOG_TRACE("[ Free ] type = %s, name = %s", GetResourceTypeName(), "Descriptor");
+	if (owner) {
+		device->destroyDescriptorPool(pool, device->GetAllocator());
+		device->destroyDescriptorSetLayout(layout);
+	}
+}
+
+Descriptor::Descriptor(std::shared_ptr<Device> const& device, DescriptorInfo const& info)
+	: ResourceBase(device) {
+	Create(device.get(), info);
+}
+
+Descriptor::Descriptor(std::shared_ptr<Device> const& device, vk::DescriptorPool pool,
+					   vk::DescriptorSetLayout layout, vk::DescriptorSet set)
+	: ResourceBase(device), pool(pool), layout(layout), set(set), device(device.get()) {}
+
+Descriptor::Descriptor(Descriptor&& other) noexcept
+	: pool(std::exchange(other.pool, nullptr)), layout(std::exchange(other.layout, nullptr)),
+	  set(std::exchange(other.set, nullptr)) {}
+Descriptor& Descriptor::operator=(Descriptor&& other) noexcept {
+	if (this != &other) {
+		pool   = std::exchange(other.pool, nullptr);
+		layout = std::exchange(other.layout, nullptr);
+		set	   = std::exchange(other.set, nullptr);
+	}
+	return *this;
+}
+
+Descriptor::~Descriptor() { Free(); }
+
+void Descriptor::Create(Device* device, DescriptorInfo const& info) {
+	this->device = device;
+	this->pool	 = CreateDescriptorPool(info);
+	this->layout = CreateDescriptorSetLayout(info);
+	this->set	 = CreateDescriptorSets(info);
+}
+
+BindlessDescriptor::BindlessDescriptor(std::shared_ptr<Device> const& device, DescriptorInfo const& info) {
+	Create(device.get(), info);
+}
+
+void BindlessDescriptor::Create(Device* device, DescriptorInfo const& info) {
+	Descriptor::Create(device, info);
+	bindings.reserve(info.bindings.size());
+	for (auto const& binding : info.bindings) {
+		auto [it, success] = bindings.try_emplace(binding.binding, binding);
+		VB_ASSERT(success, "Duplicate binding found in descriptor binding list");
+		auto& vec = it->second.resource_ids;
+		vec.resize(binding.descriptorCount);
+		std::iota(vec.begin(), vec.end(), 0);
+	}
+}
+
+auto Descriptor::CreateDescriptorPool(DescriptorInfo const& info) -> vk::DescriptorPool {
+	VB_VLA(vk::DescriptorPoolSize, pool_sizes, info.bindings.size());
+	for (u32 i = 0; auto const& binding_info : info.bindings) {
+		pool_sizes[i] = {static_cast<vk::DescriptorType>(binding_info.descriptorType),
+						 binding_info.descriptorCount};
 		++i;
 	}
-	VkDescriptorPoolCreateFlags pool_flags = std::any_of(bindings.begin(), bindings.end(),
-			[](auto const &binding) { return binding.second.update_after_bind; })
-		? VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT
-		: 0;
 
-	VkDescriptorPoolCreateInfo poolInfo = {
-		.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
-		.flags = pool_flags,
-		.maxSets = 1,
+	vk::DescriptorPoolCreateInfo poolInfo = {
+		.flags		   = info.pool_flags,
+		.maxSets	   = 1,
 		.poolSizeCount = static_cast<u32>(pool_sizes.size()),
-		.pPoolSizes = pool_sizes.data(),
+		.pPoolSizes	   = pool_sizes.data(),
 	};
 
-	VkDescriptorPool descriptorPool;
-	VB_VK_RESULT result = vkCreateDescriptorPool(owner->handle, &poolInfo, nullptr, &descriptorPool);
-	VB_CHECK_VK_RESULT(owner->owner->init_info.checkVkResult, result, "Failed to create descriptor pool!");
+	// std::tie(result, pool) = device->createDescriptorPool(poolInfo,
+	// device->GetAllocator());
+	auto [result, descriptorPool] =
+		device->createDescriptorPool(poolInfo, device->GetAllocator());
+	VB_CHECK_VK_RESULT(result, "Failed to create descriptor pool!");
 	return descriptorPool;
 }
 
-auto DescriptorResource::CreateDescriptorSetLayout() -> VkDescriptorSetLayout {
-	VB_VLA(VkDescriptorSetLayoutBinding, layout_bindings, bindings.size());
-	VB_VLA(VkDescriptorBindingFlags, binding_flags, bindings.size());
-
-	for (u32 i = 0; auto const& [type, binding] : bindings) {
-		layout_bindings[i] = {
-			.binding = binding.binding,
-			.descriptorType = static_cast<VkDescriptorType>(type),
-			.descriptorCount = binding.count,
-			.stageFlags = static_cast<VkShaderStageFlags>(binding.stage_flags),
-		};
-		binding_flags[i]  = binding.update_after_bind ? VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT : 0;
-		binding_flags[i] |= binding.partially_bound   ? VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT   : 0;
+auto Descriptor::CreateDescriptorSetLayout(DescriptorInfo const& info) -> vk::DescriptorSetLayout {
+	// fill unspecified flags with zero
+	VB_VLA(vk::DescriptorBindingFlags, binding_flags, info.bindings.size());
+	std::fill(binding_flags.begin(), binding_flags.end(), vk::DescriptorBindingFlags{});
+	for (u32 i = 0; auto const& flags : info.binding_flags) {
+		binding_flags[i] = flags;
 		++i;
 	}
 
-	VkDescriptorBindingFlags layout_flags = std::any_of(bindings.cbegin(), bindings.cend(),
-			[](auto const &info) { return info.second.update_after_bind; })
-		? VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT
-		: 0;
-
-	VkDescriptorSetLayoutBindingFlagsCreateInfo bindingFlagsInfo = {
-		.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO,
-		.bindingCount = static_cast<uint32_t>(bindings.size()),
+	vk::DescriptorSetLayoutBindingFlagsCreateInfo bindingFlagsInfo = {
+		.bindingCount  = static_cast<u32>(info.bindings.size()),
 		.pBindingFlags = binding_flags.data(),
 	};
 
-	VkDescriptorSetLayoutCreateInfo layoutInfo = {
-		.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-		.pNext = &bindingFlagsInfo,
-		.flags = layout_flags,
-		.bindingCount = static_cast<u32>(layout_bindings.size()),
-		.pBindings = layout_bindings.data(),
+	vk::DescriptorSetLayoutCreateInfo layoutInfo = {
+		.pNext		  = &bindingFlagsInfo,
+		.flags		  = info.layout_flags,
+		.bindingCount = static_cast<u32>(info.bindings.size()),
+		.pBindings	  = info.bindings.data(),
 	};
 
-	VkDescriptorSetLayout descriptorSetLayout;
-	VB_VK_RESULT result = vkCreateDescriptorSetLayout(owner->handle, &layoutInfo, nullptr, &descriptorSetLayout);
-	VB_CHECK_VK_RESULT(owner->owner->init_info.checkVkResult, result, "Failed to allocate descriptor set!");
+	auto [result, descriptorSetLayout] = device->createDescriptorSetLayout(layoutInfo, nullptr);
+	VB_CHECK_VK_RESULT(result, "Failed to create descriptor set layout!");
 	return descriptorSetLayout;
 }
 
-auto DescriptorResource::CreateDescriptorSets() -> VkDescriptorSet {
-	VkDescriptorSetAllocateInfo setInfo{
-		.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
-		.descriptorPool = pool,
+auto Descriptor::CreateDescriptorSets(DescriptorInfo const& info) -> vk::DescriptorSet {
+	vk::DescriptorSetAllocateInfo setInfo{
+		.descriptorPool		= pool,
 		.descriptorSetCount = 1,
-		.pSetLayouts = &layout,
+		.pSetLayouts		= &layout,
 	};
-	VkDescriptorSet descriptorSet;
-	VB_VK_RESULT result = vkAllocateDescriptorSets(owner->handle, &setInfo, &descriptorSet);
-	VB_CHECK_VK_RESULT(owner->owner->init_info.checkVkResult, result, "Failed to allocate descriptor set!");
+
+	// auto [result, descriptorSet] = device->allocateDescriptorSets(setInfo);
+	vk::DescriptorSet descriptorSet;
+	VB_VK_RESULT	  result = device->allocateDescriptorSets(&setInfo, &descriptorSet);
+	VB_CHECK_VK_RESULT(result, "Failed to allocate descriptor set!");
 	return descriptorSet;
 }
 

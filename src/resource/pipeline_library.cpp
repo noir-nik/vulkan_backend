@@ -10,431 +10,288 @@ import std;
 import vulkan_hpp;
 #endif
 
-#include <vulkan/vulkan.h>
+// #include <vulkan/vulkan.h>
 
-#include "pipeline_library.hpp"
-#include "instance.hpp"
-#include "pipeline.hpp"
-#include "device.hpp"
-#include "descriptor.hpp"
-#include "../compile_shader.hpp"
+#include "vulkan_backend/interface/pipeline_library.hpp"
+#include "vulkan_backend/interface/instance.hpp"
+#include "vulkan_backend/interface/device.hpp"
+#include "vulkan_backend/interface/descriptor.hpp"
+#include "vulkan_backend/compile_shader.hpp"
+#include "vulkan_backend/vk_result.hpp"
+#include "vulkan_backend/macros.hpp"
+#include "vulkan_backend/util/conversion.hpp"
 
 namespace VB_NAMESPACE {
 
+
+
 void PipelineLibrary::Free() {
-	for (auto& [_, pipeline]: vertexInputInterfaces) {
-		vkDestroyPipeline(device->handle, pipeline, device->owner->allocator);
+	for (auto& [_, pipeline]: vertex_input_interfaces) {
+		device->destroyPipeline(pipeline, device->GetAllocator());
 	}
-	for (auto& [_, pipeline]: preRasterizationShaders) {
-		vkDestroyPipeline(device->handle, pipeline, device->owner->allocator);
+	for (auto& [_, pipeline]: pre_rasterization_shaders) {
+		device->destroyPipeline(pipeline, device->GetAllocator());
 	}
-	for (auto& [_, pipeline]: fragmentOutputInterfaces) {
-		vkDestroyPipeline(device->handle, pipeline, device->owner->allocator);
+	for (auto& [_, pipeline]: fragment_output_interfaces) {
+		device->destroyPipeline(pipeline, device->GetAllocator());
 	}
-	for (auto& [_, pipeline]: fragmentShaders) {
-		vkDestroyPipeline(device->handle, pipeline, device->owner->allocator);
+	for (auto& [_, pipeline]: fragment_shaders) {
+		device->destroyPipeline(pipeline, device->GetAllocator());
 	}
 
-	vertexInputInterfaces.clear();
-	preRasterizationShaders.clear();
-	fragmentOutputInterfaces.clear();
-	fragmentShaders.clear();
+	vertex_input_interfaces.clear();
+	pre_rasterization_shaders.clear();
+	fragment_output_interfaces.clear();
+	fragment_shaders.clear();
 };
 
-auto PipelineLibrary::CreatePipeline(PipelineInfo const& info) -> Pipeline {
-	Pipeline pipeline;
-	pipeline.resource = MakeResource<PipelineResource>(device, info.name);
-	pipeline.resource->point = info.point;
-	pipeline.resource->CreateLayout({{device->descriptor.resource->layout}});
-
-	PipelineLibrary::VertexInputInfo vertexInputInfo { info.vertexAttributes, info.line_topology };
-	if (!vertexInputInterfaces.count(vertexInputInfo)) {
-		CreateVertexInputInterface(vertexInputInfo);
-	}
-
-	PipelineLibrary::PreRasterizationInfo preRasterizationInfo {
-		.layout = pipeline.resource->layout,
-		.lineTopology   = info.line_topology,
-		.cullMode       = info.cullMode 
-	};
-	PipelineLibrary::FragmentShaderInfo fragmentShaderInfo { 
-		.layout = pipeline.resource->layout, 
-		.samples        = info.samples
+auto PipelineLibrary::CreatePipeline(GraphicsPipelineInfo const& info) -> Pipeline {
+	VertexInputInfo vertexInputInfo{
+		.vertex_attributes = info.vertex_attributes,
+		.input_assembly	   = info.input_assembly
 	};
 
-	auto it_fragment = std::find_if(info.stages.begin(), info.stages.end(), [](Pipeline::Stage const& stage) {
-		return stage.stage == ShaderStage::eFragment;
+	PreRasterizationInfo preRasterizationInfo {
+		.layout         = info.layout,
+		.dynamic_states = info.dynamic_states,
+		.stages         = info.stages,
+		.tessellation   = info.tessellation,
+		.viewport       = info.viewport,
+		.rasterization  = info.rasterization,
+	};
+
+	FragmentShaderInfo fragmentShaderInfo { 
+		.layout         = info.layout, 
+		.stages         = info.stages,
+		.depth_stencil  = info.depth_stencil
+	};
+
+	FragmentOutputInfo fragmentOutputInfo {
+		.blend_attachments = info.blend_attachments,
+		.color_blend = info.color_blend,
+		.multisample = info.multisample,
+		.dynamic_states = info.dynamic_states,
+		.color_formats = info.color_formats,
+		.depth_format = info.depth_format,
+		.stencil_format = info.stencil_format,
+	};
+
+	auto it_fragment_stage = std::find_if(info.stages.begin(), info.stages.end(), [](PipelineStage const& stage) {
+		return stage.stage == vk::ShaderStageFlagBits::eFragment;
 	});
-	VB_ASSERT(it_fragment != info.stages.begin(), "Graphics pipeline should have pre-rasterization stage");
-	VB_ASSERT(it_fragment != info.stages.end(),   "Graphics pipeline should have fragment stage");
+	VB_ASSERT(it_fragment_stage != info.stages.begin(), "Graphics pipeline should have pre-rasterization stage");
+	VB_ASSERT(it_fragment_stage != info.stages.end(),   "Graphics pipeline should have fragment stage");
 
-	preRasterizationInfo.stages = {info.stages.begin(), it_fragment};
-	fragmentShaderInfo.stages   = {it_fragment, info.stages.end()};
+	preRasterizationInfo.stages = {info.stages.begin(), it_fragment_stage};
+	fragmentShaderInfo.stages   = {it_fragment_stage, info.stages.end()};
 
-	if (!preRasterizationShaders.contains(preRasterizationInfo)) {
-		CreatePreRasterizationShaders(preRasterizationInfo);
-	}
-	if (!fragmentShaders.contains(fragmentShaderInfo)) {
-		CreateFragmentShader(fragmentShaderInfo);
-	}
+	auto it_vertex_input			  = vertex_input_interfaces.find(vertexInputInfo);
+	auto it_pre_rasterization		  = pre_rasterization_shaders.find(preRasterizationInfo);
+	auto it_fragment_shader			  = fragment_shaders.find(fragmentShaderInfo);
+	auto it_fragment_output_interface = fragment_output_interfaces.find(fragmentOutputInfo);
 
-	PipelineLibrary::FragmentOutputInfo fragmentOutputInfo {
-		.layout = pipeline.resource->layout,
-		.colorFormats   = info.color_formats,
-		.useDepth       = info.use_depth,
-		.depthFormat    = info.depth_format,
-		.samples        = info.samples
-	};
-
-	if (!fragmentOutputInterfaces.contains(fragmentOutputInfo)) {
-		CreateFragmentOutputInterface(fragmentOutputInfo);
-	}
-
-	pipeline.resource->handle = LinkPipeline({
-			vertexInputInterfaces[vertexInputInfo],
-			preRasterizationShaders[preRasterizationInfo],
-			fragmentShaders[fragmentShaderInfo],
-			fragmentOutputInterfaces[fragmentOutputInfo]
+	vk::Pipeline pipeline = LinkPipeline({
+			(it_vertex_input != vertex_input_interfaces.end() ? it_vertex_input->second : CreateVertexInputInterface(vertexInputInfo)),
+			(it_pre_rasterization != pre_rasterization_shaders.end() ? it_pre_rasterization->second : CreatePreRasterizationShaders(preRasterizationInfo)),
+			(it_fragment_output_interface != fragment_output_interfaces.end() ? it_fragment_output_interface->second : CreateFragmentOutputInterface(fragmentOutputInfo)),
+			(it_fragment_shader != fragment_shaders.end() ? it_fragment_shader->second : CreateFragmentShader(fragmentShaderInfo))
 		},
-		pipeline.resource->layout,
-		std::all_of(info.stages.begin(), info.stages.end(), [](Pipeline::Stage const& stage) {
-			return (stage.flags & Pipeline::Stage::Flags::kLinkTimeOptimization) == Pipeline::Stage::Flags::kLinkTimeOptimization;
+		info.layout,
+		std::all_of(info.stages.begin(), info.stages.end(), [](PipelineStage const& stage) {
+			return (stage.flags & PipelineStage::Flags::kLinkTimeOptimization) ==
+				PipelineStage::Flags::kLinkTimeOptimization;
 		})
 	);
 
-	return pipeline;
+	return {device->shared_from_this(), pipeline, info.layout, vk::PipelineBindPoint::eGraphics, info.name};
 }
 
-void PipelineLibrary::CreateVertexInputInterface(VertexInputInfo const& info) {
-	VkGraphicsPipelineLibraryCreateInfoEXT libraryInfo{
-		.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_LIBRARY_CREATE_INFO_EXT,
-		.flags = VK_GRAPHICS_PIPELINE_LIBRARY_VERTEX_INPUT_INTERFACE_BIT_EXT,
+auto PipelineLibrary::CreateVertexInputInterface(VertexInputInfo const& info) -> vk::Pipeline {
+	vk::GraphicsPipelineLibraryCreateInfoEXT library_info{
+		.flags = vk::GraphicsPipelineLibraryFlagBitsEXT::eVertexInputInterface,
 	};
 
-	VkPipelineInputAssemblyStateCreateInfo inputAssembly{
-		.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
-		.topology = info.lineTopology? VK_PRIMITIVE_TOPOLOGY_LINE_STRIP: VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
-		// with this parameter true we can break up lines and triangles in _STRIP topology modes
-		.primitiveRestartEnable = VK_FALSE,
-	};
-
-	// We use std::vector, because vertexAttributes can be empty and vla with size 0 is undefined behavior
-	std::vector<VkVertexInputAttributeDescription> attributeDescs(info.vertexAttributes.size());
+	VB_VLA(vk::VertexInputAttributeDescription, attribute_descs,
+		   std::max(info.vertex_attributes.size(), size_t(1)));
 	u32 attributeSize = 0;
-	for (u32 i = 0; auto& format: info.vertexAttributes) {
-		attributeDescs[i] = VkVertexInputAttributeDescription{
+	for (u32 i = 0; auto& format : info.vertex_attributes) {
+		attribute_descs[i] = vk::VertexInputAttributeDescription{
 			.location = i,
-			.binding = 0,
-			.format = VkFormat(format),
+			.binding = 0, 
+			.format = vk::Format(format),
 			.offset = attributeSize
 		};
 		switch (format) {
-		case Format::eR32G32Sfloat:       attributeSize += 2 * sizeof(float); break;
-		case Format::eR32G32B32Sfloat:    attributeSize += 3 * sizeof(float); break;
-		case Format::eR32G32B32A32Sfloat: attributeSize += 4 * sizeof(float); break;
-		default: VB_ASSERT(false, "Invalid Vertex Attribute"); break;
+		case vk::Format::eR32G32Sfloat:
+			attributeSize += 2 * sizeof(float);
+			break;
+		case vk::Format::eR32G32B32Sfloat:
+			attributeSize += 3 * sizeof(float);
+			break;
+		case vk::Format::eR32G32B32A32Sfloat:
+			attributeSize += 4 * sizeof(float);
+			break;
+		default:
+			VB_ASSERT(false, "Invalid Vertex Attribute");
+			break;
 		}
-		i++;
+		++i;
 	}
 
-	VkVertexInputBindingDescription bindingDescription{
+	vk::VertexInputBindingDescription bindingDescription{
 		.binding   = 0,
 		.stride    = attributeSize,
-		.inputRate = VK_VERTEX_INPUT_RATE_VERTEX,
+		.inputRate = vk::VertexInputRate::eVertex,
 	};
 
-	VkPipelineVertexInputStateCreateInfo vertexInputInfo{
-		.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
-		.vertexBindingDescriptionCount = 1,
-		.pVertexBindingDescriptions = &bindingDescription,
-		.vertexAttributeDescriptionCount = static_cast<u32>(attributeDescs.size()),
-		.pVertexAttributeDescriptions = attributeDescs.data(),
+	vk::PipelineVertexInputStateCreateInfo vertex_input_info{
+		.vertexBindingDescriptionCount	 = 1,
+		.pVertexBindingDescriptions		 = &bindingDescription,
+		.vertexAttributeDescriptionCount = static_cast<u32>(info.vertex_attributes.size()),
+		.pVertexAttributeDescriptions	 = attribute_descs.data(),
 	};
 
-	VkGraphicsPipelineCreateInfo pipelineLibraryInfo {
-		.sType               = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
-		.pNext               = &libraryInfo,
-		.flags               = VK_PIPELINE_CREATE_LIBRARY_BIT_KHR
-								| VK_PIPELINE_CREATE_RETAIN_LINK_TIME_OPTIMIZATION_INFO_BIT_EXT,
-		.pVertexInputState   = &vertexInputInfo,
-		.pInputAssemblyState = &inputAssembly,
+	vk::GraphicsPipelineCreateInfo pipeline_library_info {
+		.pNext               = &library_info,
+		.flags               = vk::PipelineCreateFlagBits::eLibraryKHR
+								| vk::PipelineCreateFlagBits::eRetainLinkTimeOptimizationInfoEXT,
+		.pVertexInputState   = &vertex_input_info,
+		.pInputAssemblyState = &info.input_assembly,
 		.pDynamicState       = nullptr
 	};
 
-	VkPipeline pipeline;
-	VB_VK_RESULT res = vkCreateGraphicsPipelines(device->handle, device->pipelineCache, 1, 
-		&pipelineLibraryInfo, device->owner->allocator, &pipeline);
-	VB_CHECK_VK_RESULT(device->owner->init_info.checkVkResult, res, "Failed to create vertex input interface!");
-	vertexInputInterfaces.emplace(info, pipeline);
+	vk::Pipeline pipeline;
+	VB_VK_RESULT result = device->createGraphicsPipelines(device->pipeline_cache, 1, 
+		&pipeline_library_info, device->GetAllocator(), &pipeline);
+	VB_CHECK_VK_RESULT(result, "Failed to create vertex input interface!");
+	vertex_input_interfaces.emplace(info, pipeline);
+	return pipeline;
 }
 
-void PipelineLibrary::CreatePreRasterizationShaders(PreRasterizationInfo const& info) {
-	VkGraphicsPipelineLibraryCreateInfoEXT libraryInfo{
-		.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_LIBRARY_CREATE_INFO_EXT,
-		.flags = VK_GRAPHICS_PIPELINE_LIBRARY_PRE_RASTERIZATION_SHADERS_BIT_EXT,
+auto PipelineLibrary::CreatePreRasterizationShaders(PreRasterizationInfo const& info) -> vk::Pipeline {
+	vk::GraphicsPipelineLibraryCreateInfoEXT library_info{
+		.flags = vk::GraphicsPipelineLibraryFlagBitsEXT::ePreRasterizationShaders,
 	};
 
-	std::vector<VkDynamicState> dynamicStates = {
-		VK_DYNAMIC_STATE_VIEWPORT,
-		VK_DYNAMIC_STATE_SCISSOR
-	};
-
-	if (info.lineTopology) {
-		dynamicStates.push_back(VK_DYNAMIC_STATE_LINE_WIDTH);
-	}
-
-	VkPipelineDynamicStateCreateInfo dynamicInfo{
-		.sType             = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
-		.dynamicStateCount = static_cast<u32>(dynamicStates.size()),
-		.pDynamicStates    = dynamicStates.data(),
-	};
-
-	VkPipelineViewportStateCreateInfo viewportState{
-		.sType         = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
-		.viewportCount = 1,
-		.pViewports    = nullptr,
-		.scissorCount  = 1,
-		.pScissors     = nullptr,
-	};
-
-	VkPipelineRasterizationStateCreateInfo rasterizationState = {
-		.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
-		.depthClampEnable = VK_FALSE, // fragments beyond near and far planes are clamped to them
-		.rasterizerDiscardEnable = VK_FALSE,
-		.polygonMode = VK_POLYGON_MODE_FILL,
-		.cullMode = (VkCullModeFlags)info.cullMode, // line thickness in terms of number of fragments
-		.frontFace = VK_FRONT_FACE_CLOCKWISE,
-		.depthBiasEnable = VK_FALSE,
-		.depthBiasConstantFactor = 0.0f,
-		.depthBiasClamp = 0.0f,
-		.depthBiasSlopeFactor = 0.0f,
-		.lineWidth = 1.0f,
-	};
-
-	// Using the pipeline library extension, we can skip the pipeline shader module creation and directly pass the shader code to the pipeline
-	// std::vector<VkShaderModuleCreateInfo> shaderModuleInfos;
-	// shaderModuleInfos.reserve(info.stages.size());
-	// std::vector<VkPipelineShaderStageCreateInfo> shader_stages;
-	// shader_stages.reserve(info.stages.size());
-	// std::vector<std::vector<char>> bytes;
-	// bytes.reserve(info.stages.size());
-	// for (auto& stage: info.stages) {
-	// 	bytes.emplace_back(LoadShader(stage));
-
-	// 	shaderModuleInfos.emplace_back(VkShaderModuleCreateInfo{
-	// 		.sType    = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
-	// 		.codeSize =  bytes.size(),
-	// 		.pCode    = (const u32*)bytes.data()
-	// 	});
-
-	// 	shader_stages.emplace_back(VkPipelineShaderStageCreateInfo {
-	// 		.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
-	// 		.pNext = &shaderModuleInfos.back(),
-	// 		.stage = (VkShaderStageFlagBits)stage.stage,
-	// 		.pName = stage.entryPoint.data(),
-	// 		.pSpecializationInfo = nullptr,
-	// 	});
-	// }
-
-	std::vector<VkShaderModuleCreateInfo> shaderModuleInfos(info.stages.size());
-	std::vector<VkPipelineShaderStageCreateInfo> shader_stages(info.stages.size());
-	std::vector<std::vector<char>> bytes(info.stages.size());
-	for (size_t i = 0; i < info.stages.size(); ++i) {
-		auto& stage = info.stages[i];
-
-		bytes[i] = LoadShader(stage);
-
-		shaderModuleInfos[i] = VkShaderModuleCreateInfo{
-			.sType    = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
-			.codeSize = bytes[i].size(),
-			.pCode    = (const u32*)bytes[i].data()
-		};
-
-		shader_stages[i] = VkPipelineShaderStageCreateInfo {
-			.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
-			.pNext = &shaderModuleInfos[i],
-			.stage = (VkShaderStageFlagBits)stage.stage,
-			.pName = stage.entry_point.data(),
-			.pSpecializationInfo = nullptr,
-		};
-	}
-
-	VkGraphicsPipelineCreateInfo pipelineLibraryInfo {
-		.sType               = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
-		.pNext               = &libraryInfo,
-		.flags               = VK_PIPELINE_CREATE_LIBRARY_BIT_KHR |
-								VK_PIPELINE_CREATE_RETAIN_LINK_TIME_OPTIMIZATION_INFO_BIT_EXT,
+	// Using the pipeline library extension, we can skip the pipeline shader module creation and directly pass
+	// the shader code to the pipeline
+	VB_VLA(vk::ShaderModuleCreateInfo, shader_module_infos, info.stages.size());
+	VB_VLA(vk::PipelineShaderStageCreateInfo, shader_stages, info.stages.size());
+	VB_VLA(std::vector<char>, bytes, info.stages.size());
+	Pipeline::CreateShaderModuleInfos({info.stages, bytes, shader_module_infos, shader_stages});
+	vk::PipelineDynamicStateCreateInfo dynamic_info = convert::DynamicStateInfo(info.dynamic_states);
+	vk::GraphicsPipelineCreateInfo pipeline_library_info {
+		.pNext               = &library_info,
+		.flags               = vk::PipelineCreateFlagBits::eLibraryKHR |
+								vk::PipelineCreateFlagBits::eRetainLinkTimeOptimizationInfoEXT,
 		.stageCount          = static_cast<u32>(shader_stages.size()),
 		.pStages             = shader_stages.data(),
-		.pViewportState      = &viewportState,
-		.pRasterizationState = &rasterizationState,
-		.pDynamicState       = &dynamicInfo,
+		.pViewportState      = &info.viewport,
+		.pRasterizationState = &info.rasterization,
+		.pDynamicState       = &dynamic_info,
 		.layout              = info.layout,
 	};
-	VkPipeline pipeline;
-	VB_VK_RESULT res = vkCreateGraphicsPipelines(device->handle, device->pipelineCache, 1,
-		&pipelineLibraryInfo, device->owner->allocator, &pipeline);
-	VB_CHECK_VK_RESULT(device->owner->init_info.checkVkResult, res,
-		"Failed to create pre-rasterization shaders!");
-	preRasterizationShaders.emplace(info, pipeline);
+	vk::Pipeline pipeline;
+	VB_VK_RESULT result = device->createGraphicsPipelines(device->pipeline_cache, 1,
+		&pipeline_library_info, device->GetAllocator(), &pipeline);
+	VB_CHECK_VK_RESULT(result, "Failed to create pre-rasterization shaders!");
+	pre_rasterization_shaders.emplace(info, pipeline);
+	return pipeline;
 }
 
-void PipelineLibrary::CreateFragmentShader(FragmentShaderInfo const& info) {
-	VkGraphicsPipelineLibraryCreateInfoEXT libraryInfo{
-		.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_LIBRARY_CREATE_INFO_EXT,
-		.flags = VK_GRAPHICS_PIPELINE_LIBRARY_FRAGMENT_SHADER_BIT_EXT,
+auto PipelineLibrary::CreateFragmentShader(FragmentShaderInfo const& info) -> vk::Pipeline {
+	vk::GraphicsPipelineLibraryCreateInfoEXT library_info{
+		.flags = vk::GraphicsPipelineLibraryFlagBitsEXT::eFragmentShader,
 	};
 
-	VkPipelineDepthStencilStateCreateInfo depthStencilState = {
-		.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
-		.depthTestEnable = VK_TRUE,
-		.depthWriteEnable = VK_TRUE,
-		.depthCompareOp = VK_COMPARE_OP_LESS,
-		.depthBoundsTestEnable = VK_FALSE,
-		.stencilTestEnable = VK_FALSE,
-		.front = {},
-		.back = {},
-		.minDepthBounds = 0.0f,
-		.maxDepthBounds = 1.0f,
-	};
+	VB_VLA(vk::ShaderModuleCreateInfo, shader_module_infos, info.stages.size());
+	VB_VLA(vk::PipelineShaderStageCreateInfo, shader_stages, info.stages.size());
+	VB_VLA(std::vector<char>, bytes, info.stages.size());
+	Pipeline::CreateShaderModuleInfos({info.stages, bytes, shader_module_infos, shader_stages});
 
-	VkPipelineMultisampleStateCreateInfo multisampleState = {
-		.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
-		.rasterizationSamples = (VkSampleCountFlagBits)std::min(info.samples, device->physicalDevice->maxSamples),
-		.sampleShadingEnable = VK_FALSE,
-		.minSampleShading = 0.5f,
-		.pSampleMask = nullptr,
-		.alphaToCoverageEnable = VK_FALSE,
-		.alphaToOneEnable = VK_FALSE,
-	};
-
-
-	std::vector<VkShaderModuleCreateInfo> shaderModuleInfos(info.stages.size());
-	std::vector<VkPipelineShaderStageCreateInfo> shader_stages(info.stages.size());
-	std::vector<std::vector<char>> bytes(info.stages.size());
-	for (size_t i = 0; i < info.stages.size(); ++i) {
-		auto& stage = info.stages[i];
-
-		bytes[i] = LoadShader(stage);
-
-		shaderModuleInfos[i] = VkShaderModuleCreateInfo{
-			.sType    = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
-			.codeSize = bytes[i].size(),
-			.pCode    = (const u32*)bytes[i].data()
-		};
-
-		shader_stages[i] = VkPipelineShaderStageCreateInfo {
-			.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
-			.pNext = &shaderModuleInfos[i],
-			.stage = (VkShaderStageFlagBits)stage.stage,
-			.pName = stage.entry_point.data(),
-			.pSpecializationInfo = nullptr,
-		};
-	}
-
-	VkGraphicsPipelineCreateInfo pipelineLibraryInfo {
-		.sType              = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
-		.pNext              = &libraryInfo,
-		.flags              = VK_PIPELINE_CREATE_LIBRARY_BIT_KHR | 
-								VK_PIPELINE_CREATE_RETAIN_LINK_TIME_OPTIMIZATION_INFO_BIT_EXT,
+	vk::GraphicsPipelineCreateInfo pipeline_library_info {
+		.pNext              = &library_info,
+		.flags              = vk::PipelineCreateFlagBits::eLibraryKHR |
+								vk::PipelineCreateFlagBits::eRetainLinkTimeOptimizationInfoEXT,
 		.stageCount          = static_cast<u32>(shader_stages.size()),
 		.pStages             = shader_stages.data(),
-		.pMultisampleState  = &multisampleState,
-		.pDepthStencilState = &depthStencilState,
+		.pDepthStencilState = &info.depth_stencil,
 		.layout             = info.layout,
 	};
 
 	//todo: Thread pipeline cache
-	VkPipeline pipeline;
-	VB_VK_RESULT res = vkCreateGraphicsPipelines(device->handle, device->pipelineCache, 1,
-		&pipelineLibraryInfo, nullptr, &pipeline);
-	VB_CHECK_VK_RESULT(device->owner->init_info.checkVkResult, res, "Failed to create vertex input interface!");
-	fragmentShaders.emplace(info, pipeline);
+	vk::Pipeline pipeline;
+	VB_VK_RESULT result = device->createGraphicsPipelines(device->pipeline_cache, 1,
+		&pipeline_library_info, device->GetAllocator(), &pipeline);
+	VB_CHECK_VK_RESULT(result, "Failed to create fragment shader!");
+	fragment_shaders.emplace(info, pipeline);
+	return pipeline;
 }
 
-void PipelineLibrary::CreateFragmentOutputInterface(FragmentOutputInfo const& info) {
-	VkGraphicsPipelineLibraryCreateInfoEXT libraryInfo {
-		.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_LIBRARY_CREATE_INFO_EXT,
-		.flags = VK_GRAPHICS_PIPELINE_LIBRARY_FRAGMENT_OUTPUT_INTERFACE_BIT_EXT,
+auto PipelineLibrary::CreateFragmentOutputInterface(FragmentOutputInfo const& info) -> vk::Pipeline {
+	vk::GraphicsPipelineLibraryCreateInfoEXT library_info {
+		.flags = vk::GraphicsPipelineLibraryFlagBitsEXT::eFragmentOutputInterface,
 	};
 
-	std::vector<VkPipelineColorBlendAttachmentState> blendAttachments(info.colorFormats.size(), {
-		.blendEnable = VK_FALSE,
-		.colorWriteMask = VK_COLOR_COMPONENT_R_BIT
-						| VK_COLOR_COMPONENT_G_BIT
-						| VK_COLOR_COMPONENT_B_BIT
-						| VK_COLOR_COMPONENT_A_BIT,
-	});
+	VB_VLA(vk::PipelineColorBlendAttachmentState, blend_attachments, info.color_formats.size());
+	auto end = std::copy_n(info.blend_attachments.begin(),
+						   std::min(info.blend_attachments.size(), info.color_formats.size()),
+						   blend_attachments.begin());
+	std::fill(end, blend_attachments.end(), defaults::kBlendAttachment);
 
-	VkPipelineColorBlendStateCreateInfo colorBlendState {
-		.sType           = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
-		.logicOpEnable   = VK_FALSE,
-		.logicOp         = VK_LOGIC_OP_COPY,
-		.attachmentCount = static_cast<u32>(blendAttachments.size()),
-		.pAttachments    = blendAttachments.data(),
-		.blendConstants  = {0.0f, 0.0f, 0.0f, 0.0f},
-	};
+	vk::PipelineColorBlendStateCreateInfo colorBlendState = info.color_blend;
+	colorBlendState.attachmentCount = static_cast<u32>(blend_attachments.size());
+	colorBlendState.pAttachments = blend_attachments.data();
 
-	VkPipelineMultisampleStateCreateInfo multisampleState {
-		.sType                 = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
-		.rasterizationSamples  = (VkSampleCountFlagBits)std::min(info.samples, device->physicalDevice->maxSamples),
-		.sampleShadingEnable   = VK_FALSE,
-		.minSampleShading      = 0.5f,
-		.pSampleMask           = nullptr,
-		.alphaToCoverageEnable = VK_FALSE,
-		.alphaToOneEnable      = VK_FALSE,
-	};
 
-	VkPipelineRenderingCreateInfo pipelineRenderingInfo {
-		.sType                   = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR,
-		.pNext                   = &libraryInfo,
+
+	vk::PipelineRenderingCreateInfo pipeline_rendering_info {
+		.pNext                   = &library_info,
 		.viewMask                = 0,
-		.colorAttachmentCount    = static_cast<u32>(info.colorFormats.size()),
-		.pColorAttachmentFormats = reinterpret_cast<VkFormat const*>(info.colorFormats.data()),
-		.depthAttachmentFormat   = info.useDepth ? (VkFormat)info.depthFormat : VK_FORMAT_UNDEFINED,
-		.stencilAttachmentFormat = VK_FORMAT_UNDEFINED,
+		.colorAttachmentCount    = static_cast<u32>(info.color_formats.size()),
+		.pColorAttachmentFormats = reinterpret_cast<vk::Format const*>(info.color_formats.data()),
+		.depthAttachmentFormat   = info.depth_format,
+		.stencilAttachmentFormat = info.stencil_format,
 	};
 
-
-	VkGraphicsPipelineCreateInfo pipelineLibraryInfo {
-		.sType             = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
-		.pNext             = &pipelineRenderingInfo,
-		.flags             = VK_PIPELINE_CREATE_LIBRARY_BIT_KHR | VK_PIPELINE_CREATE_RETAIN_LINK_TIME_OPTIMIZATION_INFO_BIT_EXT,
-		.pMultisampleState = &multisampleState,
-		.pColorBlendState  = &colorBlendState,
-		.layout            = info.layout,
+	vk::GraphicsPipelineCreateInfo pipeline_library_info{
+		.pNext = &pipeline_rendering_info,
+		.flags = vk::PipelineCreateFlagBits::eLibraryKHR
+				| vk::PipelineCreateFlagBits::eRetainLinkTimeOptimizationInfoEXT,
+		.pMultisampleState = &info.multisample,
+		.pColorBlendState = &colorBlendState,
+		// .layout = info.layout,
 	};
 
-	VkPipeline pipeline;
-	VB_VK_RESULT result = vkCreateGraphicsPipelines(device->handle, device->pipelineCache, 1,
-		&pipelineLibraryInfo, nullptr, &pipeline);
-	VB_CHECK_VK_RESULT(device->owner->init_info.checkVkResult, result, "Failed to create fragment output interface!");
-	fragmentOutputInterfaces.emplace(info, pipeline);
+	vk::Pipeline pipeline;
+	VB_VK_RESULT result = device->createGraphicsPipelines(device->pipeline_cache, 1,
+		&pipeline_library_info, nullptr, &pipeline);
+	VB_CHECK_VK_RESULT(result, "Failed to create fragment output interface!");
+	fragment_output_interfaces.emplace(info, pipeline);
+	return pipeline;
 }
 
-auto PipelineLibrary::LinkPipeline(std::array<VkPipeline, 4> const& pipelines, VkPipelineLayout layout, bool link_time_optimization) -> VkPipeline {
+auto PipelineLibrary::LinkPipeline(std::array<vk::Pipeline, 4> const& pipelines, vk::PipelineLayout layout, bool link_time_optimization) -> vk::Pipeline {
 
 	// Link the library parts into a graphics pipeline
-	VkPipelineLibraryCreateInfoKHR linkingInfo {
-		.sType        = VK_STRUCTURE_TYPE_PIPELINE_LIBRARY_CREATE_INFO_KHR,
+	vk::PipelineLibraryCreateInfoKHR linkingInfo {
 		.libraryCount = static_cast<u32>(pipelines.size()),
 		.pLibraries   = pipelines.data(),
 	};
 
-	VkGraphicsPipelineCreateInfo pipelineInfo {
-		.sType  = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
+	vk::GraphicsPipelineCreateInfo pipelineInfo {
 		.pNext  = &linkingInfo,
 		.layout = layout,
 	};
 
 	if (link_time_optimization) {
-		pipelineInfo.flags = VK_PIPELINE_CREATE_LINK_TIME_OPTIMIZATION_BIT_EXT;
+		pipelineInfo.flags = vk::PipelineCreateFlagBits::eLinkTimeOptimizationEXT;
 	}
 
 	//todo: Thread pipeline cache
-	VkPipeline pipeline = VK_NULL_HANDLE;
-	VB_VK_RESULT result = vkCreateGraphicsPipelines(device->handle, device->pipelineCache, 1, &pipelineInfo, nullptr, &pipeline);
-	VB_CHECK_VK_RESULT(device->owner->init_info.checkVkResult, result, "Failed to create vertex input interface!");
+	vk::Pipeline pipeline;
+	VB_VK_RESULT result = device->createGraphicsPipelines(device->pipeline_cache, 1, &pipelineInfo, nullptr, &pipeline);
+	VB_CHECK_VK_RESULT(result, "Failed to link pipeline!");
 	return pipeline;
 }
 

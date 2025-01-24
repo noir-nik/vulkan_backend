@@ -13,149 +13,228 @@ import std;
 import vulkan_hpp;
 #endif
 
-#include "physical_device.hpp"
-#include "instance.hpp"
-#include "../macros.hpp"
+#include "vulkan_backend/interface/physical_device.hpp"
+#include "vulkan_backend/functions.hpp"
+#include "vulkan_backend/vk_result.hpp"
+#include "vulkan_backend/util/algorithm.hpp"
+#include "vulkan_backend/util/enumerate.hpp"
+#include "vulkan_backend/macros.hpp"
+#include "vulkan_backend/util/bits.hpp"
+#include "vulkan_backend/log.hpp"
+
 
 
 namespace VB_NAMESPACE {
-void PhysicalDeviceResource::GetDetails() {
+void PhysicalDevice::GetDetails() {
 	// get all available extensions
-	u32 extensionCount;
-	VB_VK_RESULT result;
-	do {
-		result = vkEnumerateDeviceExtensionProperties(handle, nullptr, &extensionCount, nullptr);
-		if (result == VK_SUCCESS) {
-			availableExtensions.resize(extensionCount);
-			result = vkEnumerateDeviceExtensionProperties(handle, nullptr, &extensionCount, availableExtensions.data());
-		}
-	} while (result == VK_INCOMPLETE);
-	VB_CHECK_VK_RESULT(instance->init_info.checkVkResult, result, "Failed to enumerate device extensions!");
+	auto [result, extensions] = enumerateDeviceExtensionProperties();
+	available_extensions = std::move(extensions);
+	VB_CHECK_VK_RESULT(result, "Failed to enumerate device extensions!");
 
-	// get all available families
-	u32 familyCount = 0;
-	vkGetPhysicalDeviceQueueFamilyProperties(handle, &familyCount, nullptr);
-	availableFamilies.resize(familyCount);
-	vkGetPhysicalDeviceQueueFamilyProperties(handle, &familyCount, availableFamilies.data());
-
-	auto physicalDevice = vk::PhysicalDevice(handle);
-
-	features = physicalDevice.getFeatures2<
-		vk::PhysicalDeviceFeatures2,
-		vk::PhysicalDeviceVulkan11Features,
-		vk::PhysicalDeviceVulkan12Features,
-		vk::PhysicalDeviceVulkan13Features,
-#ifdef VK_VERSION_1_4
-		vk::PhysicalDeviceVulkan14Features,
-#endif
-		vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT,
-		vk::PhysicalDeviceGraphicsPipelineLibraryFeaturesEXT,
-		vk::PhysicalDeviceDynamicRenderingUnusedAttachmentsFeaturesEXT>();
-
-	// get properties
-	properties = physicalDevice.getProperties2<
-            vk::PhysicalDeviceProperties2,
-			vk::PhysicalDeviceGraphicsPipelineLibraryPropertiesEXT,
-            vk::PhysicalDeviceSubgroupProperties>();
-
-	VkSampleCountFlags counts =
-		VkSampleCountFlags(properties.get<vk::PhysicalDeviceProperties2>()
-							   .properties.limits.framebufferColorSampleCounts);
-
-	vkGetPhysicalDeviceMemoryProperties(handle, &memoryProperties);
+	// get features, properties and queue families
+	getFeatures2(&GetFeatures2());
+	getProperties2(&GetProperties2());
+	getMemoryProperties2(&memory_properties);
+	queue_family_properties = getQueueFamilyProperties2();
 
 	// Get max number of samples
-	for (VkSampleCountFlagBits sampleCount = VK_SAMPLE_COUNT_64_BIT;
-			sampleCount >= VK_SAMPLE_COUNT_1_BIT;
-				sampleCount = static_cast<VkSampleCountFlagBits>(sampleCount >> 1)) {
-		if (counts & sampleCount) {
-			maxSamples = static_cast<SampleCount>(sampleCount);
+	vk::SampleCountFlags sample_counts = GetProperties2().properties.limits.framebufferColorSampleCounts;
+	for (vk::SampleCountFlagBits sampleCount = vk::SampleCountFlagBits::e64; sampleCount >= vk::SampleCountFlagBits::e1;
+		 sampleCount = static_cast<vk::SampleCountFlagBits>(vk::SampleCountFlags::MaskType(sampleCount) >> 1)) {
+		if (sample_counts & sampleCount) {
+			max_samples = static_cast<vk::SampleCountFlagBits>(sampleCount);
 			break;
 		}
 	}
 }
 
-auto PhysicalDeviceResource::FilterSupported(std::span<char const*> extensions) -> std::vector<std::string_view> {
+auto PhysicalDevice::FilterSupportedExtensions(std::span<char const* const> extensions) const -> std::vector<std::string_view> {
 	std::vector<std::string_view> extensionsToEnable;
 	extensionsToEnable.reserve(extensions.size());
 	std::copy_if(extensions.begin(), extensions.end(), std::back_inserter(extensionsToEnable),
 		[&](char const* extension) {
-			if (std::any_of(availableExtensions.begin(), availableExtensions.end(),
+			if (std::any_of(available_extensions.begin(), available_extensions.end(),
 				[&extension](auto const& availableExtension) {
 					return std::string_view(availableExtension.extensionName) == extension;
 			}) == true) {
 				return true; 
 			} else {
 				VB_LOG_WARN("Extension %s not supported on device %s",
-					extension, properties.get<vk::PhysicalDeviceProperties2>().properties.deviceName);
+					extension, GetProperties2().properties.deviceName);
 				return false;
 			}
 		});
 	return extensionsToEnable;
 }
 
-auto PhysicalDeviceResource::SupportsExtensions(std::span<char const*> extensions) -> bool {
-	return std::all_of(extensions.begin(), extensions.end(), [this](auto const& extension) {
-		return std::any_of(availableExtensions.begin(), availableExtensions.end(),
-			[&extension](auto const& availableExtension) {
-				return std::string_view(availableExtension.extensionName) == extension;
-			});
+auto PhysicalDevice::SupportsExtension(std::string_view extension) const -> bool {
+	return algo::SupportsExtension(available_extensions, extension);
+}
+
+auto PhysicalDevice::SupportsExtensions(std::span<char const* const> extensions) const -> bool {
+	return algo::SupportsExtensions(available_extensions, extensions);
+}
+
+auto PhysicalDevice::SupportsSurface(u32 queue_family_index, vk::SurfaceKHR const surface) const -> bool {
+		auto [result, supported] = getSurfaceSupportKHR(queue_family_index, surface);
+		VB_CHECK_VK_RESULT(result, "Failed to get surface support");
+		return supported;
+}
+
+auto PhysicalDevice::SupportsQueues(std::span<QueueInfo const> queues) const -> bool {
+	VB_VLA(u32, num_taken_queues, queue_family_properties.size());
+	std::fill(num_taken_queues.begin(), num_taken_queues.end(), 0);
+	return std::all_of(queues.begin(), queues.end(), [this, &num_taken_queues](auto const& queue) {
+		for (u32 i = 0; i < queue_family_properties.size(); ++i) {
+			auto& family_properties = queue_family_properties[i].queueFamilyProperties;
+			bool has_available_queues = num_taken_queues[i] < family_properties.queueCount;
+			bool flags_supported = TestBits(family_properties.queueFlags, queue.flags);
+			bool no_supported_surface_required = queue.supported_surface == vk::SurfaceKHR{};
+			bool surface_supported = no_supported_surface_required || SupportsSurface(i, queue.supported_surface);
+
+			if (has_available_queues && flags_supported && surface_supported) {
+				++num_taken_queues[i];
+				VB_LOG_TRACE("Using queue family %u", i);
+				return true;
+			}
+
+		}
+		VB_LOG_WARN("Failed to find suitable queue family");
+		return false;
 	});
 }
 
-auto PhysicalDeviceResource::SupportsRequiredFeatures() -> bool {
-	vk::PhysicalDeviceFeatures const& physicalDeviceFeatures = features.get<vk::PhysicalDeviceFeatures2>().features;
-	vk::PhysicalDeviceVulkan11Features const& vulkan11Features = features.get<vk::PhysicalDeviceVulkan11Features>();
-	vk::PhysicalDeviceVulkan12Features const& vulkan12Features = features.get<vk::PhysicalDeviceVulkan12Features>();
-	vk::PhysicalDeviceVulkan13Features const& vulkan13Features = features.get<vk::PhysicalDeviceVulkan13Features>();
+auto PhysicalDevice::GetDedicatedTransferQueueFamilyIndex() const -> u32 {
+	for (auto [index, family] : util::enumerate(queue_family_properties)) {
+		if (TestBits(family.queueFamilyProperties.queueFlags, vk::QueueFlagBits::eTransfer) &&
+			!TestBits(family.queueFamilyProperties.queueFlags, vk::QueueFlagBits::eGraphics)) {
+			return index;
+		}
+	}
+	return kQueueNotFound;
+}
 
-	if (physicalDeviceFeatures.geometryShader &&
-		physicalDeviceFeatures.sampleRateShading &&
-		physicalDeviceFeatures.logicOp &&
-		physicalDeviceFeatures.depthClamp &&
-		physicalDeviceFeatures.fillModeNonSolid &&
-		physicalDeviceFeatures.wideLines &&
-		physicalDeviceFeatures.multiViewport &&
-		physicalDeviceFeatures.samplerAnisotropy &&
-		// descriptor indexing
-		vulkan12Features.shaderUniformBufferArrayNonUniformIndexing &&
-		vulkan12Features.shaderSampledImageArrayNonUniformIndexing &&
-		vulkan12Features.shaderStorageBufferArrayNonUniformIndexing &&
-		vulkan12Features.descriptorBindingSampledImageUpdateAfterBind &&
-		vulkan12Features.descriptorBindingStorageImageUpdateAfterBind &&
-		vulkan12Features.descriptorBindingPartiallyBound &&
-		vulkan12Features.runtimeDescriptorArray &&
+auto PhysicalDevice::GetDedicatedComputeQueueFamilyIndex() const -> u32 {
+	for (auto [index, family] : util::enumerate(queue_family_properties)) {
+		if (TestBits(family.queueFamilyProperties.queueFlags, vk::QueueFlagBits::eCompute) &&
+			!TestBits(family.queueFamilyProperties.queueFlags, vk::QueueFlagBits::eGraphics)) {
+			return index;
+		}
+	}
+	return kQueueNotFound;
+}
+
+auto PhysicalDevice::GetQueueCount(u32 queue_family_index) const -> u32 {
+	return queue_family_properties[queue_family_index].queueFamilyProperties.queueCount;
+}
+
+auto PhysicalDevice::SupportsRequiredFeatures() const -> bool {
+	if (// descriptor indexing
+		base_features.vulkan12.shaderUniformBufferArrayNonUniformIndexing &&
+		base_features.vulkan12.shaderSampledImageArrayNonUniformIndexing &&
+		base_features.vulkan12.shaderStorageBufferArrayNonUniformIndexing &&
+		base_features.vulkan12.descriptorBindingSampledImageUpdateAfterBind &&
+		base_features.vulkan12.descriptorBindingStorageImageUpdateAfterBind &&
+		base_features.vulkan12.descriptorBindingPartiallyBound &&
+		base_features.vulkan12.runtimeDescriptorArray &&
 		// buffer device address
-		vulkan12Features.bufferDeviceAddress &&
+		base_features.vulkan12.bufferDeviceAddress &&
 		// dynamic rendering
-		vulkan13Features.dynamicRendering &&
+		base_features.vulkan13.dynamicRendering &&
 		// synchronization2
-		vulkan13Features.synchronization2 &&
-		features.get<vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>().extendedDynamicState) {
+		base_features.vulkan13.synchronization2) {
 		return true;
 	}
 	return false;
 }
 
-auto PhysicalDeviceResource::GetQueueFamilyIndex(const QueueFamilyIndexRequest& params) -> u32 {
+auto PhysicalDevice::GetQueueCreateInfos(std::span<QueueInfo const> infos)
+	-> std::vector<vk::DeviceQueueCreateInfo> {
+	VB_VLA(u32, num_taken_queues, queue_family_properties.size());
+	std::fill(num_taken_queues.begin(), num_taken_queues.end(), 0);
+
+	for (auto& queue_info : infos) {
+		// Queue choosing heuristics
+		using AvoidInfo = QueueFamilyIndexRequest::AvoidInfo;
+		std::span<AvoidInfo const> avoid_if_possible;
+		if (queue_info.separate_family) {
+			switch (vk::QueueFlags::MaskType(queue_info.flags)) {
+			case VK_QUEUE_COMPUTE_BIT: 
+				avoid_if_possible = QueueFamilyIndexRequest::kAvoidCompute;
+				break;
+			case VK_QUEUE_TRANSFER_BIT:
+				avoid_if_possible = QueueFamilyIndexRequest::kAvoidTransfer;
+				break;
+			default:
+				avoid_if_possible = QueueFamilyIndexRequest::kAvoidOther;
+				break;
+			}
+		}
+		// Get family index fitting requirements
+		QueueFamilyIndexRequest request{
+			.desired_flags    = queue_info.flags,
+			.undesired_flags  = {},
+			.avoid_if_possible = avoid_if_possible,			
+			.num_taken_queues  = num_taken_queues
+		};
+		if (queue_info.supported_surface) {
+			request.surface_to_support = queue_info.supported_surface;
+		}
+
+		auto const [result, family_index] = GetQueueFamilyIndex(request);
+		if (result == QueueFamilyIndexRequest::Result::kNoSuitableQueue) {
+			VB_LOG_WARN("Requested queue flags %d not available on device: %s",
+				vk::QueueFlags::MaskType(queue_info.flags),
+				GetProperties2().properties.deviceName);
+			break;
+		} else if (result == QueueFamilyIndexRequest::Result::kAllSuitableQueuesTaken) {
+			VB_LOG_WARN("Requested more queues with flags %d than available on device: %s. Queue was not created",
+				vk::QueueFlags::MaskType(queue_info.flags),
+				GetProperties2().properties.deviceName);
+			continue;
+		}
+		// Create queue
+		++num_taken_queues[family_index];
+	}
+
+	auto num_families = std::count_if(num_taken_queues.begin(), num_taken_queues.end(),
+								[](int queueCount) { return queueCount > 0; });
+	// VB_VLA(vk::DeviceQueueCreateInfo, queueCreateInfos, num_families);
+	std::vector<vk::DeviceQueueCreateInfo> queueCreateInfos(num_families);
+	for (u32 queueInfoIndex{}, familyIndex{}; familyIndex < num_taken_queues.size(); ++familyIndex) {
+		if (num_taken_queues[familyIndex] == 0) continue;
+		queueCreateInfos[queueInfoIndex] = vk::DeviceQueueCreateInfo{
+			.queueFamilyIndex = familyIndex,
+			.queueCount       = num_taken_queues[familyIndex],
+		};
+		++queueInfoIndex;
+	}
+
+	return queueCreateInfos;
+}
+
+auto PhysicalDevice::GetQueueFamilyIndex(const QueueFamilyIndexRequest& params)
+	-> std::pair<QueueFamilyIndexRequest::Result, u32> {
+	using Result = QueueFamilyIndexRequest::Result;
 	struct Candidate {
-		u32   familyIndex;
+		u32	  familyIndex;
 		float penalty;
 	};
-	
+
 	std::vector<Candidate> candidates;
-	auto& families = availableFamilies;
 	
 	// Check if queue family is suitable
-	for (size_t i = 0; i < families.size(); i++) {
-		bool suitable = ((families[i].queueFlags & params.desiredFlags) == params.desiredFlags &&
-						((families[i].queueFlags & params.undesiredFlags) == 0));
+	for (auto [i, family] : util::enumerate(queue_family_properties)) {
+		auto desiredFlagsSet = TestBits(family.queueFamilyProperties.queueFlags, params.desired_flags);
+		auto undesiredFlagsSet = TestBits(family.queueFamilyProperties.queueFlags, params.undesired_flags);
+
+		bool suitable = desiredFlagsSet && (!params.undesired_flags || !undesiredFlagsSet);
 
 		// Get surface support
-		if (params.surfaceToSupport != VK_NULL_HANDLE) {
-			VkBool32 presentSupport = false;
-			VB_VK_RESULT result = vkGetPhysicalDeviceSurfaceSupportKHR(handle, i, params.surfaceToSupport, &presentSupport);
-			VB_CHECK_VK_RESULT(instance->init_info.checkVkResult, result, "vkGetPhysicalDeviceSurfaceSupportKHR failed!");
+		if (params.surface_to_support != nullptr) {
+			vk::Bool32 presentSupport = false;
+			VB_VK_RESULT result = getSurfaceSupportKHR(i, params.surface_to_support, &presentSupport);
+			VB_CHECK_VK_RESULT(result, "vkGetPhysicalDeviceSurfaceSupportKHR failed!");
 			suitable = suitable && presentSupport;
 		}
 
@@ -163,28 +242,28 @@ auto PhysicalDeviceResource::GetQueueFamilyIndex(const QueueFamilyIndexRequest& 
 			continue;
 		}
 
-		if (params.avoidIfPossible.empty()) {
-			return i;
+		if (params.avoid_if_possible.empty()) {
+			return {Result::kSuccess, i};
 		}
 
 		Candidate candidate(i, 0.0f);
-		
+
 		// Prefer family with least number of VkQueueFlags
-		for (VkQueueFlags bit = 1; bit != 0; bit <<= 1) {
-			if (families[i].queueFlags & bit) {
+		for (vk::QueueFlags::MaskType bit = 1; bit != 0; bit <<= 1) {
+			if (TestBits(vk::QueueFlags::MaskType(family.queueFamilyProperties.queueFlags), bit)) {
 				candidate.penalty += 0.01f;
 			}
 		}
 
 		// Add penalty for supporting unwanted VkQueueFlags
-		for (auto& avoid: params.avoidIfPossible) {
-			if ((families[i].queueFlags & avoid.flags) == avoid.flags) {
+		for (auto& avoid: params.avoid_if_possible) {
+			if (TestBits(family.queueFamilyProperties.queueFlags, avoid.flags)) {
 				candidate.penalty += avoid.penalty;
 			}
 		}
 		
 		// Add candidate if family is not filled up
-		if (params.numTakenQueues[i] < families[i].queueCount) {
+		if (params.num_taken_queues[i] < family.queueFamilyProperties.queueCount) {
 			candidates.push_back(candidate);
 		} else {
 			VB_LOG_WARN("Queue family %zu is filled up", i);
@@ -192,7 +271,7 @@ auto PhysicalDeviceResource::GetQueueFamilyIndex(const QueueFamilyIndexRequest& 
 	}
 
 	if (candidates.empty()) {
-		return ALL_SUITABLE_QUEUES_TAKEN;
+		return {Result::kAllSuitableQueuesTaken, ~0u};
 	}
 
 	u32 bestFamily = std::min_element(candidates.begin(), candidates.end(),
@@ -200,18 +279,15 @@ auto PhysicalDeviceResource::GetQueueFamilyIndex(const QueueFamilyIndexRequest& 
 									return l.penalty < r.penalty; 
 								})->familyIndex;
 	VB_LOG_TRACE("Best family: %u", bestFamily);
-	return bestFamily;
+	return {Result::kSuccess, bestFamily};
 }
 
-auto PhysicalDeviceResource::GetName() const -> char const* {
-	return properties.get<vk::PhysicalDeviceProperties2>().properties.deviceName;
+auto PhysicalDevice::GetName() const -> char const* {
+	return GetProperties2().properties.deviceName;
 }
 
-auto PhysicalDeviceResource::GetType() const -> char const* {
+auto PhysicalDevice::GetResourceTypeName() const -> char const* {
 	return "PhysicalDeviceResource";
 }
 
-auto PhysicalDeviceResource::GetInstance() -> InstanceResource* {
-	return instance;
-}
 } // namespace VB_NAMESPACE

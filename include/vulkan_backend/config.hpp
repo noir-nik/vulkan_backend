@@ -1,6 +1,4 @@
-#ifndef VULKAN_BACKEND_CONFIG_HPP_
-#define VULKAN_BACKEND_CONFIG_HPP_
-
+#pragma once
 /* 
 	Possible options
 */
@@ -43,5 +41,3 @@
 #if !defined( VB_EXPORT )
 #define VB_EXPORT
 #endif
-
-#endif // VULKAN_BACKEND_CONFIG_HPP_

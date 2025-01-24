@@ -1,5 +1,4 @@
-#ifndef VULKAN_BACKEND_QUEUE_HPP_
-#define VULKAN_BACKEND_QUEUE_HPP_
+#pragma once
 
 #ifndef VB_USE_STD_MODULE
 #include <span>
@@ -7,43 +6,42 @@
 import std;
 #endif
 
-#include "../fwd.hpp"
+#ifndef VB_USE_VULKAN_MODULE
+#include <vulkan/vulkan.hpp>
+#elif defined(VB_DEV)
+import vulkan_hpp;
+#endif
+
+#include "vulkan_backend/fwd.hpp"
+#include "vulkan_backend/types.hpp"
+#include "vulkan_backend/classes/no_copy_no_move.hpp"
+#include "vulkan_backend/structs/command.hpp"
+#include "vulkan_backend/interface/info/queue.hpp"
 
 VB_EXPORT
 namespace VB_NAMESPACE {	
-struct QueueInfo {
-	QueueFlags flags             = QueueFlagBits::eGraphics;
-	bool       separate_family   = false;    // Prefer separate family
-	Surface    supported_surface = nullptr;
-};
-
-struct SubmitInfo {
-	std::span<SemaphoreSubmitInfo const> waitSemaphoreInfos;
-	std::span<SemaphoreSubmitInfo const> signalSemaphoreInfos;
-};
-
-class Queue {
-	QueueResource* resource = nullptr;
-	friend SwapChainResource;
-	friend Swapchain;
-	friend CommandResource;
-	friend Command;
-	friend DeviceResource;
-	friend Device;
+// Queue handle
+class Queue : public vk::Queue {
 public:
-	inline operator bool() const {
-		return resource != nullptr;
-	}
-
 	void Submit(
-		std::span<CommandBufferSubmitInfo const> cmds,
-		Fence fence = nullptr,
-		SubmitInfo const& info = {}
+		std::span<vk::CommandBufferSubmitInfo const> cmds,
+		vk::Fence                                    fence = nullptr,
+		SubmitInfo const&                            info = {}
 	) const;
 	auto GetInfo() const -> QueueInfo;
 	auto GetFamilyIndex() const -> u32;
-	auto GetHandle() const -> vk::Queue;
+	auto GetIndex() const -> u32;
+
+	using vk::Queue::operator=;
+	Queue(vk::Queue queue, Device* device, u32 family, u32 index, QueueInfo info);
+
+private:
+	friend Swapchain;
+	friend Command;
+	friend Device;
+	Device*	  device = nullptr;
+	u32		  family;
+	u32		  index;
+	QueueInfo info;
 };
 } // namespace VB_NAMESPACE
-
-#endif // VULKAN_BACKEND_QUEUE_HPP_

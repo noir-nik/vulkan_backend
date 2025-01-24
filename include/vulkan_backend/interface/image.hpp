@@ -1,58 +1,73 @@
-#ifndef VULKAN_BACKEND_IMAGE_HPP_
-#define VULKAN_BACKEND_IMAGE_HPP_
+#pragma once
 
 #ifndef VB_USE_STD_MODULE
-#include <memory>
 #include <string_view>
+#include <vector>
+
 #elif defined(VB_DEV)
 import std;
 #endif
 
-#include "../structs.hpp"
-#include "../fwd.hpp"
+#ifndef VB_USE_VULKAN_MODULE
+#include <vulkan/vulkan.hpp>
+#elif defined(VB_DEV)
+import vulkan_hpp;
+#endif
+
+#ifndef VB_DEV
+#include <vk_mem_alloc.h>
+#else
+import vk_mem_alloc;
+#endif
+
+#include "vulkan_backend/classes/base.hpp"
+#include "vulkan_backend/classes/gpu_resource.hpp"
+#include "vulkan_backend/classes/structs.hpp"
+#include "vulkan_backend/fwd.hpp"
+#include "vulkan_backend/interface/info/image.hpp"
+#include "vulkan_backend/types.hpp"
 
 VB_EXPORT
-namespace VB_NAMESPACE {	
-struct SamplerInfo {
-	Filter magFilter = Filter::eLinear;
-	Filter minFilter = Filter::eLinear;
-	MipmapMode mipmapMode = MipmapMode::eLinear;
-	struct Wrap {
-		WrapMode u = WrapMode::eRepeat;
-		WrapMode v = WrapMode::eRepeat;
-		WrapMode w = WrapMode::eRepeat;
-	} wrap = {};
-	float mipLodBias = 0.0f;
-	bool anisotropyEnable = false;
-	float maxAnisotropy = 0.0f;
-	bool compareEnable = false;
-	CompareOp compareOp = CompareOp::eAlways;
-	float minLod = 0.0f;
-	float maxLod = 1.0f;
-	BorderColor borderColor = BorderColor::eIntOpaqueBlack;
-	bool unnormalizedCoordinates = false;
-};
-	
-struct ImageInfo {
-	Extent3D const&          extent;
-	Format const&            format;
-	ImageUsageFlags const&   usage;
-	SampleCount              samples = SampleCount::e1;
-	SamplerInfo              sampler = {};
-	u32                      layers  = 1;
-	std::string_view         name    = "";
-};
+namespace VB_NAMESPACE {
 
-class Image {
-	std::shared_ptr<ImageResource> resource;
-	friend SwapChainResource;
-	friend Swapchain;
-	friend DeviceResource;
+// Image handle
+using ImageRef = std::shared_ptr<Image>;
+
+class Image : public vk::Image, public Named, public GpuResource, public ResourceBase<Device> {
+  public:
+	// Creates resources
+	Image(std::shared_ptr<Device> const& device, ImageInfo const& info);
+	// From swapchain
+	Image(vk::Image image, vk::ImageView view, Extent3D const& extent, std::string_view name = "");
+	// Frees all resources
+	~Image();
+
+	Image(Image&& other);
+	Image& operator=(Image&& other);
+	operator bool() const { return vk::Image::operator bool(); }
+
+	auto GetFormat() const -> vk::Format;
+	auto GetResourceTypeName() const -> char const* override;
+
+	// Utility
+	void SetDebugUtilsName(char const* name);
+	void SetDebugUtilsViewName(char const* name);
+
+  private:
+  	friend Swapchain;
+	friend Device;
 	friend Command;
-public:
-	auto GetResourceID() const -> u32;
-	auto GetFormat()     const -> Format;
+	friend RenderingInfo;
+	Image() = default;
+	void Create(ImageInfo const& info);
+	void Free() override;
+
+	vk::ImageView			   view;
+	VmaAllocation			   allocation;
+	std::vector<vk::ImageView> layersView;
+	vk::ImageLayout			   layout;
+	vk::ImageAspectFlags	   aspect;
+	ImageInfo				   info;
+	bool					   fromSwapchain = false;
 };
 } // namespace VB_NAMESPACE
-
-#endif // VULKAN_BACKEND_IMAGE_HPP_

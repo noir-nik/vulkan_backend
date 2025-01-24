@@ -10,41 +10,43 @@ import vulkan_hpp;
 #endif
 
 #include "vulkan_backend/interface/queue.hpp"
-#include "queue.hpp"
-#include "device.hpp"
-#include "instance.hpp"
-#include "../macros.hpp"
+#include "vulkan_backend/interface/device.hpp"
+#include "vulkan_backend/interface/instance.hpp"
+#include "vulkan_backend/vk_result.hpp"
+#include "vulkan_backend/macros.hpp"
 
 namespace VB_NAMESPACE {
+Queue::Queue(vk::Queue queue, Device* device, u32 family, u32 index, QueueInfo info)
+	: vk::Queue(queue), device(device), family(family), index(index), info(info) {}
+
 void Queue::Submit(
-		std::span<CommandBufferSubmitInfo const> cmds,
-		Fence fence,
+		std::span<vk::CommandBufferSubmitInfo const> cmds,
+		vk::Fence fence,
 		SubmitInfo const& info) const {
 
-	VkSubmitInfo2 submitInfo {
-		.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2,
+	vk::SubmitInfo2 submitInfo {
 		.waitSemaphoreInfoCount = static_cast<u32>(info.waitSemaphoreInfos.size()),
-		.pWaitSemaphoreInfos = reinterpret_cast<VkSemaphoreSubmitInfo const*>(info.waitSemaphoreInfos.data()),
+		.pWaitSemaphoreInfos = info.waitSemaphoreInfos.data(),
 		.commandBufferInfoCount = static_cast<u32>(cmds.size()),
-		.pCommandBufferInfos = reinterpret_cast<VkCommandBufferSubmitInfo const*>(cmds.data()),
+		.pCommandBufferInfos = cmds.data(),
 		.signalSemaphoreInfoCount = static_cast<u32>(info.signalSemaphoreInfos.size()),
-		.pSignalSemaphoreInfos = reinterpret_cast<VkSemaphoreSubmitInfo const*>(info.signalSemaphoreInfos.data()),
+		.pSignalSemaphoreInfos = info.signalSemaphoreInfos.data(),
 	};
 
-	auto result = vkQueueSubmit2(resource->handle, 1, &submitInfo, fence);
-	VB_CHECK_VK_RESULT(resource->device->owner->init_info.checkVkResult, result, "Failed to submit command buffer");
+	auto result = submit2(submitInfo, fence);
+	VB_CHECK_VK_RESULT(result, "Failed to submit command buffer");
 }
 
 auto Queue::GetInfo() const -> QueueInfo {
-	return resource->init_info;
+	return info;
 }
 
 auto Queue::GetFamilyIndex() const -> u32 {
-	return resource->familyIndex;
+	return family;
+}
+auto Queue::GetIndex() const -> u32 {
+	return index;
 }
 
-auto Queue::GetHandle() const -> vk::Queue {
-	return resource->handle;
-}
 
 } // namespace VB_NAMESPACE

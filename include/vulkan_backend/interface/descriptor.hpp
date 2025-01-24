@@ -1,45 +1,68 @@
-#ifndef VULKAN_BACKEND_DESCRIPTOR_HPP_
-#define VULKAN_BACKEND_DESCRIPTOR_HPP_
+#pragma once
 
 #ifndef VB_USE_STD_MODULE
 #include <memory>
+#include <unordered_map>
 #elif defined(VB_DEV)
 import std;
 #endif
 
-#include "../fwd.hpp"
+#include "vulkan_backend/classes/base.hpp"
+#include "vulkan_backend/fwd.hpp"
+#include "vulkan_backend/interface/info/descriptor.hpp"
+#include "vulkan_backend/types.hpp"
 
 VB_EXPORT
-namespace VB_NAMESPACE {	
-struct BindingInfo {
-	u32 static constexpr kBindingAuto = ~0u;
-	u32 static constexpr kMaxDescriptors = 8192;
-	// Type of descriptor (e.g., DescriptorType::Sampler)
-	DescriptorType const& type;
-	// Binding number for this type.
-	// If not specified, will be assigned automatically,
-	// get it with GetBinding(type)
-	u32 binding = kBindingAuto;
-	// Max number of descriptors for this binding
-	u32 count = kMaxDescriptors;
-	// Shader stages that can access this resource
-	ShaderStage stage_flags = ShaderStage::eAll;
-	// Use update after bind flag
-	bool update_after_bind = false;
-	bool partially_bound   = true;
+namespace VB_NAMESPACE {
+class Descriptor : public ResourceBase<Device> {
+  public:
+	Descriptor(std::shared_ptr<Device> const& device, DescriptorInfo const& info);
+	Descriptor(std::shared_ptr<Device> const& device, vk::DescriptorPool pool, vk::DescriptorSetLayout layout,
+			   vk::DescriptorSet set);
+	Descriptor(Descriptor&& other) noexcept;
+	Descriptor& operator=(Descriptor&& other) noexcept;
+	// Frees all resources
+	~Descriptor();
+	// Todo: add move constructor and move assignment
+	vk::DescriptorPool		pool   = nullptr;
+	vk::DescriptorSetLayout layout = nullptr;
+	vk::DescriptorSet		set	   = nullptr;
+
+  protected:
+	Descriptor() = default;
+	void Create(Device* device, DescriptorInfo const& info);
+  private:
+  	// For being device member;
+	Device* device = nullptr;
+	void Free();
+	inline auto GetDevice() const -> Device* { return owner.get(); }
+	auto CreateDescriptorSetLayout(DescriptorInfo const& info) -> vk::DescriptorSetLayout;
+	auto CreateDescriptorPool(DescriptorInfo const& info) -> vk::DescriptorPool;
+	auto CreateDescriptorSets(DescriptorInfo const& info) -> vk::DescriptorSet;
+
+	// Bindless Resource IDs for descriptor indexing
+	friend PipelineLibrary;
+	friend Device;
+	friend Buffer;
+	friend Image;
 };
 
-class Descriptor {
-public:
-	auto GetBinding(DescriptorType type) -> u32;
-private:
-	std::shared_ptr<DescriptorResource> resource;
-	friend PipelineLibrary;
-	friend DeviceResource;
-	friend BufferResource;
-	friend ImageResource;
+class BindlessDescriptor : public Descriptor {
+  public:
+	BindlessDescriptor(std::shared_ptr<Device> const& device, DescriptorInfo const& info);
+	// Get binding of bindless array with respective type
+	auto GetBindingInfo(u32 binding) const -> vk::DescriptorSetLayoutBinding const&;
+	auto PopID(u32 binding) -> u32;
+	void PushID(u32 binding, u32 id);
+  private:
 	friend Device;
-	friend Command;
+	BindlessDescriptor() = default;
+	void Create(Device* device, DescriptorInfo const& info);
+	struct BindingInfoInternal : vk::DescriptorSetLayoutBinding {
+		std::vector<u32> resource_ids;
+	};
+
+	std::unordered_map<u32, BindingInfoInternal> bindings;
 };
+
 } // namespace VB_NAMESPACE
-#endif // VULKAN_BACKEND_DESCRIPTOR_HPP_

@@ -15,7 +15,7 @@ ifeq ($(BUILD_DIR),)
 endif
 
 ifeq ($(BUILD_TYPE),)
-	BUILD_TYPE := Release
+	BUILD_TYPE := Debug
 endif
 
 EXAMPLE_OBJS := $(patsubst %.cpp, $(BUILD_DIR)/%.o, $(EXAMPLE_SRCS))
@@ -39,7 +39,7 @@ VULKAN_HPP_FLAGS = \
     -DVULKAN_HPP_NO_CONSTRUCTORS \
     -DVULKAN_HPP_NO_UNION_CONSTRUCTORS
 
-CXXFLAGS := -MMD -MP -std=c++20 $(INCLUDE) $(WARNINGS_DISABLE) $(VULKAN_HPP_FLAGS)
+CXXFLAGS := -MMD -MP -std=c++20 $(INCLUDE) $(WARNINGS_DISABLE) $(VULKAN_HPP_FLAGS) -fpermissive
 
 ifeq ($(BUILD_TYPE),Debug)
 	CXXFLAGS += -g -ggdb -O0
@@ -84,9 +84,9 @@ $(TARGET): $(EXAMPLE_OBJS) $(VB_OBJS)
 
 rm:
 	@$(RM) \
-	$(wildcard *.o) \
-	$(wildcard *.d) \
-	$(wildcard *.a) \
+	$(wildcard $(BUILD_DIR)/*.o) \
+	$(wildcard $(BUILD_DIR)/*.d) \
+	$(wildcard $(BUILD_DIR)/*.a) \
 	$(TARGET)
 
 -include $(DEPFILES)

@@ -1,5 +1,4 @@
-#ifndef VULKAN_BACKEND_RESOURCE_COMMON_HPP_
-#define VULKAN_BACKEND_RESOURCE_COMMON_HPP_
+#pragma once
 
 #include "vulkan_backend/config.hpp"
 
@@ -21,5 +20,5 @@ struct NoCopyNoMove {
 	NoCopyNoMove& operator=(NoCopyNoMove&&) = delete;
 	~NoCopyNoMove() = default;
 };
+
 } // namespace VB_NAMESPACE
-#endif // VULKAN_BACKEND_RESOURCE_COMMON_HPP_

@@ -1,15 +1,15 @@
-#ifndef VULKAN_BACKEND_COMPILE_SHADER_HPP_
-#define VULKAN_BACKEND_COMPILE_SHADER_HPP_
+#pragma once
 
 #ifndef VB_USE_STD_MODULE
 #include <string_view>
-#else
+#elif defined(VB_DEV)
 import std;
 #endif
 
 #include "vulkan_backend/config.hpp"
-#include "vulkan_backend/interface/pipeline.hpp"
+#include "vulkan_backend/interface/info/pipeline.hpp"
 
+VB_EXPORT
 namespace VB_NAMESPACE {
 /**
  * @brief Reads a binary file into a vector of characters.
@@ -22,9 +22,8 @@ auto ReadBinaryFile(std::string_view const& path) -> std::vector<char>;
  * @brief Compiles a shader stage using the shader compiler provided by the stage.
  * @param[in] stage The shader stage to compile.
  * @param[out] out_file The path to the output file.
- * @return A vector of characters containing the compiled shader.
  */
-auto CompileShader(Pipeline::Stage const& stage, char const* out_file) -> std::vector<char>;
+void CompileShader(PipelineStage const& stage, char const* out_file);
 
 /**
  * @brief Loads a shader stage from a file, compile if needed.
@@ -32,6 +31,5 @@ auto CompileShader(Pipeline::Stage const& stage, char const* out_file) -> std::v
  * @param[in] stage The shader stage to load.
  * @return A vector of characters containing the loaded shader.
  */
-auto LoadShader(Pipeline::Stage const& stage) -> std::vector<char>;
+auto LoadShader(PipelineStage const& stage) -> std::vector<char>;
 } // namespace VB_NAMESPACE
-#endif // VULKAN_BACKEND_COMPILE_SHADER_HPP_

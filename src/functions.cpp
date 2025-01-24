@@ -12,14 +12,27 @@ import vulkan_hpp;
 
 #include "vulkan_backend/functions.hpp"
 #include "vulkan_backend/interface/instance.hpp"
-#include "resource/instance.hpp"
 
 namespace VB_NAMESPACE {
-auto CreateInstance(InstanceInfo const& info) -> Instance {
-	Instance instance;
-	instance.resource = std::make_shared<InstanceResource>();
-	instance.resource->Create(info);
-	instance.resource->GetPhysicalDevices();
-	return instance;
+auto SetupStructureChain(std::span<vk::BaseOutStructure* const> structures) -> vk::BaseOutStructure& {
+	if (structures.size() > 1) [[likely]] {
+		for (std::size_t i = 0; i < structures.size() - 1; ++i) {
+			structures[i]->pNext = structures[i + 1];
+		}
+	}
+	return *structures.front();
+}
+
+void AppendStructureChain(vk::BaseOutStructure* const base_structure, vk::BaseOutStructure* const structure_to_append) {
+	vk::BaseOutStructure* iter = base_structure;
+	while (iter->pNext != nullptr) {
+		iter = iter->pNext;
+	}
+	iter->pNext = structure_to_append;
+}
+
+void InsertStructureAfter(vk::BaseOutStructure* const base_structure, vk::BaseOutStructure* const structure_to_insert) {
+	structure_to_insert->pNext = base_structure->pNext;
+	base_structure->pNext = structure_to_insert;
 }
 } // namespace VB_NAMESPACE

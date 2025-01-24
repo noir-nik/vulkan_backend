@@ -12,8 +12,10 @@ import std;
 import vulkan_hpp;
 #endif
 
-#include "macros.hpp"
-#include "compile_shader.hpp"
+#include "vulkan_backend/macros.hpp"
+#include "vulkan_backend/compile_shader.hpp"
+#include "vulkan_backend/util/algorithm.hpp"
+#include "vulkan_backend/log.hpp"
 
 namespace VB_NAMESPACE {
 auto ReadBinaryFile(std::string_view const& path) -> std::vector<char> {
@@ -27,7 +29,7 @@ auto ReadBinaryFile(std::string_view const& path) -> std::vector<char> {
 	return buffer;
 }
 
-auto CompileShader(Pipeline::Stage const& stage, char const* out_file) -> std::vector<char> {
+void CompileShader(PipelineStage const& stage, char const* out_file) {
 	char compile_string[VB_MAX_COMPILE_STRING_SIZE];
 
 	if (stage.source.data.ends_with(".slang")){
@@ -40,35 +42,36 @@ auto CompileShader(Pipeline::Stage const& stage, char const* out_file) -> std::v
 				stage.entry_point.data(), stage.compile_options.data());
 	}
 
-	// VB_LOG_TRACE("[ShaderCompiler] Command: %s", compile_string);
+	VB_LOG_TRACE("[ ShaderCompiler ] Command: %s", compile_string);
 	while(std::system(compile_string)) {
-		std::printf("[ ShaderCompiler ] Error! Press something to Compile Again");
+		VB_LOG_ERROR("[ ShaderCompiler ] Error! Press something to Compile Again");
 		std::getchar();
 	}
-
-	return ReadBinaryFile(out_file);
 }
-
-auto LoadShader(Pipeline::Stage const& stage) -> std::vector<char> {
-	char out_file_name[VB_MAX_PATH_SIZE];
+template <typename T>
+void Replace(std::span<T> buffer, T const& old_value, T const& new_value) {
+	std::replace(buffer.begin(), buffer.end(), old_value, new_value);
+}
+auto LoadShader(PipelineStage const& stage) -> std::vector<char> {
+	char out_file_name[VB_MAX_PATH_SIZE + 1];
 	char out_file[VB_MAX_PATH_SIZE + 1];
 
 	int size = std::snprintf(out_file_name, VB_MAX_PATH_SIZE, "%s", stage.source.data.data());
-	out_file[VB_MAX_PATH_SIZE] = '\0';
 	std::span file_name_view(out_file_name, size);
 	std::replace(file_name_view.begin(), file_name_view.end(), '\\', '-');
 	std::replace(file_name_view.begin(), file_name_view.end(), '/', '-');
+	// std::ranges::replace(file_name_view, '.', '-');
 
 	if (stage.out_path.empty()) {
-		std::snprintf(out_file, VB_MAX_PATH_SIZE, "./%s.spv", file_name_view.data());
+		VB_FORMAT_TO_BUFFER(out_file, "./%s.spv", file_name_view.data());
 	} else {
-		std::snprintf(out_file, VB_MAX_PATH_SIZE, "%s/%s.spv", stage.out_path.data(), stage.source.data.data());
+		VB_FORMAT_TO_BUFFER(out_file, "%s/%s.spv", stage.out_path.data(), stage.source.data.data());
 	}
 	std::filesystem::path const shader_path = stage.source.data;
 	std::filesystem::path out_file_path = out_file;
 	out_file_path = out_file_path.parent_path();
 	bool compilation_required =
-		(stage.flags & Pipeline::Stage::Flags::kAllowSkipCompilation) != Pipeline::Stage::Flags::kAllowSkipCompilation;
+		(stage.flags & PipelineStage::Flags::kAllowSkipCompilation) != PipelineStage::Flags::kAllowSkipCompilation;
 
 	if (!std::filesystem::exists(out_file_path)){
 		std::filesystem::create_directories(out_file_path);
@@ -84,7 +87,8 @@ auto LoadShader(Pipeline::Stage const& stage) -> std::vector<char> {
 		compilation_required = true;
 	}
 	if (compilation_required) {
-		return CompileShader(stage, out_file);
+		CompileShader(stage, out_file);
+		return ReadBinaryFile(out_file);
 	} else {
 		return ReadBinaryFile(out_file);
 	}

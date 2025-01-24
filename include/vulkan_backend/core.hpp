@@ -1,11 +1,9 @@
-#ifndef VULKAN_BACKEND_CORE_HPP_
-#define VULKAN_BACKEND_CORE_HPP_
+#pragma once
 
+#include "classes/structs.hpp"
 #include "config.hpp"
 #include "functions.hpp"
 #include "fwd.hpp"
-#include "io.hpp"
-#include "structs.hpp"
 #include "interface/buffer.hpp"
 #include "interface/command.hpp"
 #include "interface/descriptor.hpp"
@@ -16,5 +14,6 @@
 #include "interface/pipeline.hpp"
 #include "interface/queue.hpp"
 #include "interface/swapchain.hpp"
+#include "log.hpp"
 
-#endif // VULKAN_BACKEND_CORE_HPP_
+#include "constants/constants.hpp"
