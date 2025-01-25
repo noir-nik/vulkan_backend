@@ -15,8 +15,8 @@ import vulkan_hpp;
 #endif
 
 #include "vulkan_backend/config.hpp"
-#include "vulkan_backend/interface/info/pipeline.hpp"
-#include "vulkan_backend/interface/info/pipeline_library.hpp"
+#include "vulkan_backend/interface/pipeline/info.hpp"
+#include "vulkan_backend/interface/pipeline_library/info.hpp"
 
 #if !defined( VB_HASH_COMBINE )
 #define VB_HASH_COMBINE( seed, value ) \

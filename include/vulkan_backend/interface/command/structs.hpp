@@ -12,7 +12,7 @@ import std;
 import vulkan_hpp;
 #endif
 
-#include "vulkan_backend/interface/image.hpp"
+#include "vulkan_backend/interface/image/image.hpp"
 #include "vulkan_backend/config.hpp"
 #include "vulkan_backend/types.hpp"
 
@@ -26,25 +26,25 @@ struct SubmitInfo {
 
 struct RenderingInfo {
 	struct ColorAttachment {
-		Image const&             colorImage;
-		Image const&             resolveImage = {}; // == no resolve attachment
-		vk::AttachmentLoadOp     loadOp       = vk::AttachmentLoadOp::eClear;
-		vk::AttachmentStoreOp    storeOp      = vk::AttachmentStoreOp::eStore;
-		vk::ClearColorValue      clearValue   = {{{0.0f, 0.0f, 0.0f, 0.0f}}};
+		Image const&             color_image;
+		Image const&             resolve_image = {}; // == no resolve attachment
+		vk::AttachmentLoadOp     load_op       = vk::AttachmentLoadOp::eClear;
+		vk::AttachmentStoreOp    store_op      = vk::AttachmentStoreOp::eStore;
+		vk::ClearColorValue      clear_value   = {{{0.0f, 0.0f, 0.0f, 0.0f}}};
 	};
 
 	struct DepthStencilAttachment {
 		Image const&                  image;
-		vk::AttachmentLoadOp          loadOp     = vk::AttachmentLoadOp::eClear;
-		vk::AttachmentStoreOp         storeOp    = vk::AttachmentStoreOp::eStore;
-		vk::ClearDepthStencilValue    clearValue = {1.0f, 0};
+		vk::AttachmentLoadOp          load_op     = vk::AttachmentLoadOp::eClear;
+		vk::AttachmentStoreOp         store_op    = vk::AttachmentStoreOp::eStore;
+		vk::ClearDepthStencilValue    clear_value = {1.0f, 0};
 	};
 
-	std::span<ColorAttachment const> colorAttachs;
+	std::span<ColorAttachment const> color_attachments;
 	DepthStencilAttachment const&    depth      = {.image = {}};
 	DepthStencilAttachment const&    stencil    = {.image = {}};
-	vk::Rect2D const&                renderArea = vk::Rect2D{};  // == use size of colorAttachs[0] or depth
-	u32                              layerCount = 1;
+	vk::Rect2D const&                render_area = vk::Rect2D{};  // == use size of colorAttachs[0] or depth
+	u32                              layer_count = 1;
 };
 
 struct BlitInfo {
@@ -76,39 +76,6 @@ struct ImageBarrier {
 	u32             srcQueueFamilyIndex = vk::QueueFamilyIgnored;
 	u32             dstQueueFamilyIndex = vk::QueueFamilyIgnored;
 	MemoryBarrier   memoryBarrier;
-};
-
-// this is rather complicated, but necessary
-struct QueueFamilyIndexRequest {
-	enum class Result {
-		kSuccess,
-		kNoSuitableQueue,
-		kAllSuitableQueuesTaken
-	};
-	
-	struct AvoidInfo{
-		vk::QueueFlags flags;
-		float penalty;
-	};
-	// Default avoid flags for compute, transfer and all other queues
-	// to select the best queue
-	AvoidInfo static constexpr inline kAvoidCompute[] = 
-		{{vk::QueueFlagBits::eGraphics, 1.0f}, {vk::QueueFlagBits::eTransfer, 0.5f}};
-	AvoidInfo static constexpr inline kAvoidTransfer[] = 
-		{{vk::QueueFlagBits::eGraphics, 1.0f}, {vk::QueueFlagBits::eCompute, 0.5f}};
-	AvoidInfo static constexpr inline kAvoidOther[] = 
-		{{vk::QueueFlagBits::eGraphics, 1.0f}};
-
-	// required queue flags (strict)
-	vk::QueueFlags desired_flags;
-	// undesired queue flags (strict)
-	vk::QueueFlags undesired_flags;
-	// span of pairs (flags, priority to avoid)
-	std::span<AvoidInfo const> avoid_if_possible = {};
-	// surface to support (strict)
-	vk::SurfaceKHR surface_to_support = nullptr;
-	// numbers of already taken queues in families (optional)
-	std::span<u32 const> num_taken_queues = {};
 };
 } // VB_NAMESPACE
 

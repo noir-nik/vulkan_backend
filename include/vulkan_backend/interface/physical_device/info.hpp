@@ -15,21 +15,16 @@ import vulkan_hpp;
 
 #include "vulkan_backend/fwd.hpp"
 #include "vulkan_backend/types.hpp"
-#include "vulkan_backend/interface/physical_device.hpp"
 #include "vulkan_backend/defaults/device.hpp"
-#include "queue.hpp"
+#include "vulkan_backend/interface/queue/queue.hpp"
 
 VB_EXPORT
 namespace VB_NAMESPACE {
 struct PhysicalDeviceSelectInfo {
 	// Required user extensions for the physical device
-	std::span<char const* const> extensions;
+	std::span<char const* const> extensions = {};
 	// Span of required queues, defaulting to one queue with graphics capability
 	std::span<QueueInfo const> queues = defaults::kOneGraphicsComputeQueue;
-	// Optional function that returns the biggest number for the most preferred device
-	// Return negative value to reject device
-	// std::function<float(Instance const&, PhysicalDevice const&)> rating_function = defaults::kDefaultRatingFunction;
-	float (& rating_function)(Instance const&, PhysicalDevice const&) = defaults::kDefaultRatingFunction;
 };
 
 // struct PhysicalDeviceSelectResult {

@@ -9,15 +9,13 @@ import std;
 import vulkan_hpp;
 #endif
 
-#include "vulkan_backend/interface/queue.hpp"
-#include "vulkan_backend/interface/device.hpp"
-#include "vulkan_backend/interface/instance.hpp"
+#include "vulkan_backend/interface/queue/queue.hpp"
+#include "vulkan_backend/interface/device/device.hpp"
 #include "vulkan_backend/vk_result.hpp"
-#include "vulkan_backend/macros.hpp"
 
 namespace VB_NAMESPACE {
-Queue::Queue(vk::Queue queue, Device* device, u32 family, u32 index, QueueInfo info)
-	: vk::Queue(queue), device(device), family(family), index(index), info(info) {}
+Queue::Queue(vk::Queue queue, Device& device, u32 family, u32 index, vk::QueueFlags flags)
+	: vk::Queue(queue), device(&device), family(family), index(index), flags(flags) {}
 
 void Queue::Submit(
 		std::span<vk::CommandBufferSubmitInfo const> cmds,
@@ -37,15 +35,15 @@ void Queue::Submit(
 	VB_CHECK_VK_RESULT(result, "Failed to submit command buffer");
 }
 
-auto Queue::GetInfo() const -> QueueInfo {
-	return info;
-}
-
 auto Queue::GetFamilyIndex() const -> u32 {
 	return family;
 }
 auto Queue::GetIndex() const -> u32 {
 	return index;
+}
+
+auto Queue::GetFlags() const -> vk::QueueFlags {
+	return flags;
 }
 
 

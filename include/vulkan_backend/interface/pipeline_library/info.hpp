@@ -13,7 +13,7 @@ import std;
 import vulkan_hpp;
 #endif
 
-#include "vulkan_backend/interface/info/pipeline.hpp"
+#include "vulkan_backend/interface/pipeline/info.hpp"
 #include "vulkan_backend/util/algorithm.hpp"
 #include "vulkan_backend/log.hpp"
 

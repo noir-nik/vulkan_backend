@@ -40,6 +40,10 @@ void SetLogLevel(LogLevel level) {
 	Logger::Get().SetLogLevel(level);
 }
 
+void SetMessageCallback(MessageCallback callback) {
+	Logger::Get().SetMessageCallback(callback);
+}
+
 void Logger::Log(LogLevel level, char const* format, ...) {
 	char buffer[kMessageBufferSize];
 	va_list args;

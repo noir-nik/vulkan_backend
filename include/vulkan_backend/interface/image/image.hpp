@@ -24,19 +24,19 @@ import vk_mem_alloc;
 #include "vulkan_backend/classes/gpu_resource.hpp"
 #include "vulkan_backend/classes/structs.hpp"
 #include "vulkan_backend/fwd.hpp"
-#include "vulkan_backend/interface/info/image.hpp"
+#include "vulkan_backend/interface/image/info.hpp"
 #include "vulkan_backend/types.hpp"
 
 VB_EXPORT
 namespace VB_NAMESPACE {
 
 // Image handle
-using ImageRef = std::shared_ptr<Image>;
+using ImageRef = Image*;
 
 class Image : public vk::Image, public Named, public GpuResource, public ResourceBase<Device> {
   public:
 	// Creates resources
-	Image(std::shared_ptr<Device> const& device, ImageInfo const& info);
+	Image(Device& device, ImageInfo const& info);
 	// From swapchain
 	Image(vk::Image image, vk::ImageView view, Extent3D const& extent, std::string_view name = "");
 	// Frees all resources
@@ -52,7 +52,9 @@ class Image : public vk::Image, public Named, public GpuResource, public Resourc
 	// Utility
 	void SetDebugUtilsName(char const* name);
 	void SetDebugUtilsViewName(char const* name);
-
+	
+	inline auto GetBinding() const -> u32 { return info.binding; }
+	inline void SetBinding(u32 binding) { info.binding = binding; }
   private:
   	friend Swapchain;
 	friend Device;

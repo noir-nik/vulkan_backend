@@ -13,7 +13,7 @@ import std;
 import vulkan_hpp;
 #endif
 
-#include "vulkan_backend/interface/physical_device.hpp"
+#include "vulkan_backend/interface/physical_device/physical_device.hpp"
 #include "vulkan_backend/functions.hpp"
 #include "vulkan_backend/vk_result.hpp"
 #include "vulkan_backend/util/algorithm.hpp"
@@ -85,14 +85,13 @@ auto PhysicalDevice::SupportsQueues(std::span<QueueInfo const> queues) const -> 
 	VB_VLA(u32, num_taken_queues, queue_family_properties.size());
 	std::fill(num_taken_queues.begin(), num_taken_queues.end(), 0);
 	return std::all_of(queues.begin(), queues.end(), [this, &num_taken_queues](auto const& queue) {
-		for (u32 i = 0; i < queue_family_properties.size(); ++i) {
-			auto& family_properties = queue_family_properties[i].queueFamilyProperties;
-			bool has_available_queues = num_taken_queues[i] < family_properties.queueCount;
-			bool flags_supported = TestBits(family_properties.queueFlags, queue.flags);
-			bool no_supported_surface_required = queue.supported_surface == vk::SurfaceKHR{};
-			bool surface_supported = no_supported_surface_required || SupportsSurface(i, queue.supported_surface);
+		for (auto [i, family_property] : util::enumerate(queue_family_properties)) {
+			bool has_available_queues = num_taken_queues[i] < family_property.queueFamilyProperties.queueCount;
+			bool has_desired_flags = TestBits(family_property.queueFamilyProperties.queueFlags, queue.flags);
+			bool has_undesired_flags = (family_property.queueFamilyProperties.queueFlags & queue.undesired_flags) != vk::QueueFlags{};
+			bool supports_surface = queue.supported_surface == vk::SurfaceKHR{} || SupportsSurface(i, queue.supported_surface);
 
-			if (has_available_queues && flags_supported && surface_supported) {
+			if (has_available_queues && has_desired_flags && !has_undesired_flags && supports_surface) {
 				++num_taken_queues[i];
 				VB_LOG_TRACE("Using queue family %u", i);
 				return true;
@@ -104,24 +103,29 @@ auto PhysicalDevice::SupportsQueues(std::span<QueueInfo const> queues) const -> 
 	});
 }
 
-auto PhysicalDevice::GetDedicatedTransferQueueFamilyIndex() const -> u32 {
-	for (auto [index, family] : util::enumerate(queue_family_properties)) {
-		if (TestBits(family.queueFamilyProperties.queueFlags, vk::QueueFlagBits::eTransfer) &&
-			!TestBits(family.queueFamilyProperties.queueFlags, vk::QueueFlagBits::eGraphics)) {
-			return index;
-		}
-	}
-	return kQueueNotFound;
+auto PhysicalDevice::IsSuitable(PhysicalDeviceSelectInfo const& info) const -> bool {
+	return SupportsExtensions(info.extensions) && SupportsRequiredFeatures() && SupportsQueues(info.queues);
 }
 
-auto PhysicalDevice::GetDedicatedComputeQueueFamilyIndex() const -> u32 {
+auto PhysicalDevice::GetDedicatedTransferQueueFamily() const -> vk::QueueFamilyProperties const* {
+	for (auto [index, family] : util::enumerate(queue_family_properties)) {
+		if (TestBits(family.queueFamilyProperties.queueFlags, vk::QueueFlagBits::eTransfer) &&
+			!TestBits(family.queueFamilyProperties.queueFlags, vk::QueueFlagBits::eGraphics) &&
+			!TestBits(family.queueFamilyProperties.queueFlags, vk::QueueFlagBits::eCompute)) {
+			return &family.queueFamilyProperties;
+		}
+	}
+	return nullptr;
+}
+
+auto PhysicalDevice::GetDedicatedComputeQueueFamily() const -> vk::QueueFamilyProperties const* {
 	for (auto [index, family] : util::enumerate(queue_family_properties)) {
 		if (TestBits(family.queueFamilyProperties.queueFlags, vk::QueueFlagBits::eCompute) &&
 			!TestBits(family.queueFamilyProperties.queueFlags, vk::QueueFlagBits::eGraphics)) {
-			return index;
+			return &family.queueFamilyProperties;
 		}
 	}
-	return kQueueNotFound;
+	return nullptr;
 }
 
 auto PhysicalDevice::GetQueueCount(u32 queue_family_index) const -> u32 {
@@ -147,55 +151,11 @@ auto PhysicalDevice::SupportsRequiredFeatures() const -> bool {
 	}
 	return false;
 }
-
+/* 
 auto PhysicalDevice::GetQueueCreateInfos(std::span<QueueInfo const> infos)
 	-> std::vector<vk::DeviceQueueCreateInfo> {
 	VB_VLA(u32, num_taken_queues, queue_family_properties.size());
 	std::fill(num_taken_queues.begin(), num_taken_queues.end(), 0);
-
-	for (auto& queue_info : infos) {
-		// Queue choosing heuristics
-		using AvoidInfo = QueueFamilyIndexRequest::AvoidInfo;
-		std::span<AvoidInfo const> avoid_if_possible;
-		if (queue_info.separate_family) {
-			switch (vk::QueueFlags::MaskType(queue_info.flags)) {
-			case VK_QUEUE_COMPUTE_BIT: 
-				avoid_if_possible = QueueFamilyIndexRequest::kAvoidCompute;
-				break;
-			case VK_QUEUE_TRANSFER_BIT:
-				avoid_if_possible = QueueFamilyIndexRequest::kAvoidTransfer;
-				break;
-			default:
-				avoid_if_possible = QueueFamilyIndexRequest::kAvoidOther;
-				break;
-			}
-		}
-		// Get family index fitting requirements
-		QueueFamilyIndexRequest request{
-			.desired_flags    = queue_info.flags,
-			.undesired_flags  = {},
-			.avoid_if_possible = avoid_if_possible,			
-			.num_taken_queues  = num_taken_queues
-		};
-		if (queue_info.supported_surface) {
-			request.surface_to_support = queue_info.supported_surface;
-		}
-
-		auto const [result, family_index] = GetQueueFamilyIndex(request);
-		if (result == QueueFamilyIndexRequest::Result::kNoSuitableQueue) {
-			VB_LOG_WARN("Requested queue flags %d not available on device: %s",
-				vk::QueueFlags::MaskType(queue_info.flags),
-				GetProperties2().properties.deviceName);
-			break;
-		} else if (result == QueueFamilyIndexRequest::Result::kAllSuitableQueuesTaken) {
-			VB_LOG_WARN("Requested more queues with flags %d than available on device: %s. Queue was not created",
-				vk::QueueFlags::MaskType(queue_info.flags),
-				GetProperties2().properties.deviceName);
-			continue;
-		}
-		// Create queue
-		++num_taken_queues[family_index];
-	}
 
 	auto num_families = std::count_if(num_taken_queues.begin(), num_taken_queues.end(),
 								[](int queueCount) { return queueCount > 0; });
@@ -212,74 +172,21 @@ auto PhysicalDevice::GetQueueCreateInfos(std::span<QueueInfo const> infos)
 
 	return queueCreateInfos;
 }
+ */
+auto PhysicalDevice::FindQueueFamilyIndex(QueueInfo const& info, vk::QueueFlags undesired_flags)
+	-> u32 {
 
-auto PhysicalDevice::GetQueueFamilyIndex(const QueueFamilyIndexRequest& params)
-	-> std::pair<QueueFamilyIndexRequest::Result, u32> {
-	using Result = QueueFamilyIndexRequest::Result;
-	struct Candidate {
-		u32	  familyIndex;
-		float penalty;
-	};
-
-	std::vector<Candidate> candidates;
-	
 	// Check if queue family is suitable
 	for (auto [i, family] : util::enumerate(queue_family_properties)) {
-		auto desiredFlagsSet = TestBits(family.queueFamilyProperties.queueFlags, params.desired_flags);
-		auto undesiredFlagsSet = TestBits(family.queueFamilyProperties.queueFlags, params.undesired_flags);
-
-		bool suitable = desiredFlagsSet && (!params.undesired_flags || !undesiredFlagsSet);
-
-		// Get surface support
-		if (params.surface_to_support != nullptr) {
-			vk::Bool32 presentSupport = false;
-			VB_VK_RESULT result = getSurfaceSupportKHR(i, params.surface_to_support, &presentSupport);
-			VB_CHECK_VK_RESULT(result, "vkGetPhysicalDeviceSurfaceSupportKHR failed!");
-			suitable = suitable && presentSupport;
-		}
-
-		if (!suitable) {
-			continue;
-		}
-
-		if (params.avoid_if_possible.empty()) {
-			return {Result::kSuccess, i};
-		}
-
-		Candidate candidate(i, 0.0f);
-
-		// Prefer family with least number of VkQueueFlags
-		for (vk::QueueFlags::MaskType bit = 1; bit != 0; bit <<= 1) {
-			if (TestBits(vk::QueueFlags::MaskType(family.queueFamilyProperties.queueFlags), bit)) {
-				candidate.penalty += 0.01f;
-			}
-		}
-
-		// Add penalty for supporting unwanted VkQueueFlags
-		for (auto& avoid: params.avoid_if_possible) {
-			if (TestBits(family.queueFamilyProperties.queueFlags, avoid.flags)) {
-				candidate.penalty += avoid.penalty;
-			}
-		}
-		
-		// Add candidate if family is not filled up
-		if (params.num_taken_queues[i] < family.queueFamilyProperties.queueCount) {
-			candidates.push_back(candidate);
-		} else {
-			VB_LOG_WARN("Queue family %zu is filled up", i);
+		bool desiredFlagsSet = TestBits(family.queueFamilyProperties.queueFlags, info.flags);
+		bool undesiredFlagsSet = (family.queueFamilyProperties.queueFlags & undesired_flags) != vk::QueueFlags{};
+		bool supportsSurface = info.supported_surface == vk::SurfaceKHR{} || SupportsSurface(i, info.supported_surface);
+		if (desiredFlagsSet && !undesiredFlagsSet && supportsSurface) {
+			VB_LOG_TRACE("Best family: %u", i);
+			return i;
 		}
 	}
-
-	if (candidates.empty()) {
-		return {Result::kAllSuitableQueuesTaken, ~0u};
-	}
-
-	u32 bestFamily = std::min_element(candidates.begin(), candidates.end(),
-							[](Candidate& l, Candidate& r) {
-									return l.penalty < r.penalty; 
-								})->familyIndex;
-	VB_LOG_TRACE("Best family: %u", bestFamily);
-	return {Result::kSuccess, bestFamily};
+	return kQueueNotFound;
 }
 
 auto PhysicalDevice::GetName() const -> char const* {

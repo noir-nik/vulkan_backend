@@ -10,21 +10,22 @@ import std;
 import vulkan_hpp;
 #endif
 
-#include "vulkan_backend/interface/swapchain.hpp"
-#include "vulkan_backend/interface/device.hpp"
-#include "vulkan_backend/interface/swapchain.hpp"
-#include "vulkan_backend/interface/instance.hpp"
-#include "vulkan_backend/interface/image.hpp"
-#include "vulkan_backend/interface/command.hpp"
+#include "vulkan_backend/interface/swapchain/swapchain.hpp"
+#include "vulkan_backend/interface/device/device.hpp"
+#include "vulkan_backend/interface/swapchain/swapchain.hpp"
+#include "vulkan_backend/interface/instance/instance.hpp"
+#include "vulkan_backend/interface/image/image.hpp"
+#include "vulkan_backend/interface/command/command.hpp"
 #include "vulkan_backend/macros.hpp"
+#include "vulkan_backend/interface/physical_device/physical_device.hpp"
 #include "vulkan_backend/log.hpp"
 #include "vulkan_backend/vk_result.hpp"
 
 #include <vulkan/vulkan.h>
 
 namespace VB_NAMESPACE {
-Swapchain::Swapchain(std::shared_ptr<Device> const& device, SwapchainInfo const& info)
-	: ResourceBase(device), info(info) {
+Swapchain::Swapchain(Device& device, SwapchainInfo const& info)
+	: ResourceBase(&device), info(info) {
 	Create(info);
 }
 
@@ -331,7 +332,7 @@ void Swapchain::CreateImages() {
 		VB_CHECK_VK_RESULT(result, "Failed to create SwapChain image view!");
 
 		// Add debug names
-		if (owner->GetInstance()->IsDebugUtilsEnabled()) {
+		if (owner->GetInstance().IsDebugUtilsEnabled()) {
 			images.back().SetDebugUtilsName(image_name);
 			VB_FORMAT_WITH_SIZE(view_name, 512, "%s%s", image_name, "View");
 			images.back().SetDebugUtilsViewName(image_name);
@@ -355,12 +356,8 @@ void Swapchain::CreateSemaphores() {
 }
 
 void Swapchain::CreateCommands(u32 queueFamilyindex) {
-	// commands.resize(info.frames_in_flight, Command(owner, queueFamilyindex));
-	// for (auto& cmd: commands) {
-	// 	cmd.Create(queueFamilyindex);
-	// }
 	for (u32 i = 0; i < info.frames_in_flight; ++i) {
-		commands.emplace_back(owner, queueFamilyindex);
+		commands.emplace_back(*owner, queueFamilyindex);
 	}
 }
 
@@ -391,7 +388,7 @@ auto Swapchain::GetResourceTypeName() const -> char const* {
 }
 
 void Swapchain::Free() {
-	VB_LOG_TRACE("[ Free ] type = %s, name = %s", GetResourceTypeName(), /* GetName() */ "Swapchain");
+	VB_LOG_TRACE("[ Free ] type = %s, name = %s", GetResourceTypeName(), GetName().data());
 	VB_VK_RESULT result;
 	for (auto& cmd: commands) {
 		result = owner->waitForFences(1, &cmd.fence, vk::True, std::numeric_limits<u32>::max());
@@ -416,7 +413,7 @@ void Swapchain::Free() {
 	owner->destroySwapchainKHR(*this, owner->GetAllocator());
 
 	if (info.destroy_surface) {
-		owner->GetInstance()->destroySurfaceKHR(info.surface, owner->GetAllocator());
+		owner->GetInstance().destroySurfaceKHR(info.surface, owner->GetAllocator());
 	}
 	vk::SwapchainKHR::operator=(nullptr);
 	info.surface = nullptr;

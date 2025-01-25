@@ -44,7 +44,7 @@ set(INCLUDE_DIRS
 )
 
 # SRC
-file(GLOB SOURCES "src/*.cpp" "src/resource/*.cpp")
+file(GLOB_RECURSE SOURCES "src/*.cpp")
 
 # disable warning for vma
 if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")

@@ -1,7 +1,6 @@
 #pragma once
 
 #ifndef VB_USE_STD_MODULE
-#include <memory>
 #include <span>
 #elif defined(VB_DEV)
 import std;
@@ -14,7 +13,7 @@ import vulkan_hpp;
 #endif
 
 #include "config.hpp"
-#include "interface/info/physical_device.hpp"
+#include "interface/physical_device/info.hpp"
 
 VB_EXPORT
 namespace VB_NAMESPACE {

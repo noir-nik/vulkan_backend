@@ -12,46 +12,21 @@ import vulkan_hpp;
 
 // #include <vulkan/vulkan.h>
 
-#include "vulkan_backend/interface/pipeline_library.hpp"
-#include "vulkan_backend/interface/instance.hpp"
-#include "vulkan_backend/interface/device.hpp"
-#include "vulkan_backend/interface/descriptor.hpp"
-#include "vulkan_backend/compile_shader.hpp"
-#include "vulkan_backend/vk_result.hpp"
+#include "vulkan_backend/interface/device/device.hpp"
 #include "vulkan_backend/macros.hpp"
 #include "vulkan_backend/util/conversion.hpp"
+#include "vulkan_backend/util/pipeline.hpp"
+#include "vulkan_backend/vk_result.hpp"
+
 
 namespace VB_NAMESPACE {
-
-
-
-void PipelineLibrary::Free() {
-	for (auto& [_, pipeline]: vertex_input_interfaces) {
-		device->destroyPipeline(pipeline, device->GetAllocator());
-	}
-	for (auto& [_, pipeline]: pre_rasterization_shaders) {
-		device->destroyPipeline(pipeline, device->GetAllocator());
-	}
-	for (auto& [_, pipeline]: fragment_output_interfaces) {
-		device->destroyPipeline(pipeline, device->GetAllocator());
-	}
-	for (auto& [_, pipeline]: fragment_shaders) {
-		device->destroyPipeline(pipeline, device->GetAllocator());
-	}
-
-	vertex_input_interfaces.clear();
-	pre_rasterization_shaders.clear();
-	fragment_output_interfaces.clear();
-	fragment_shaders.clear();
-};
-
-auto PipelineLibrary::CreatePipeline(GraphicsPipelineInfo const& info) -> Pipeline {
+auto SplitPipelineInfo(GraphicsPipelineInfo const& info) -> std::tuple<VertexInputInfo, PreRasterizationInfo, FragmentShaderInfo, FragmentOutputInfo> {
 	VertexInputInfo vertexInputInfo{
 		.vertex_attributes = info.vertex_attributes,
 		.input_assembly	   = info.input_assembly
 	};
 
-	PreRasterizationInfo preRasterizationInfo {
+	PreRasterizationInfo pre_rasterization_info {
 		.layout         = info.layout,
 		.dynamic_states = info.dynamic_states,
 		.stages         = info.stages,
@@ -60,13 +35,13 @@ auto PipelineLibrary::CreatePipeline(GraphicsPipelineInfo const& info) -> Pipeli
 		.rasterization  = info.rasterization,
 	};
 
-	FragmentShaderInfo fragmentShaderInfo { 
+	FragmentShaderInfo fragment_shader_info { 
 		.layout         = info.layout, 
 		.stages         = info.stages,
 		.depth_stencil  = info.depth_stencil
 	};
 
-	FragmentOutputInfo fragmentOutputInfo {
+	FragmentOutputInfo fragment_output_info {
 		.blend_attachments = info.blend_attachments,
 		.color_blend = info.color_blend,
 		.multisample = info.multisample,
@@ -76,71 +51,22 @@ auto PipelineLibrary::CreatePipeline(GraphicsPipelineInfo const& info) -> Pipeli
 		.stencil_format = info.stencil_format,
 	};
 
-	auto it_fragment_stage = std::find_if(info.stages.begin(), info.stages.end(), [](PipelineStage const& stage) {
-		return stage.stage == vk::ShaderStageFlagBits::eFragment;
-	});
-	VB_ASSERT(it_fragment_stage != info.stages.begin(), "Graphics pipeline should have pre-rasterization stage");
-	VB_ASSERT(it_fragment_stage != info.stages.end(),   "Graphics pipeline should have fragment stage");
-
-	preRasterizationInfo.stages = {info.stages.begin(), it_fragment_stage};
-	fragmentShaderInfo.stages   = {it_fragment_stage, info.stages.end()};
-
-	auto it_vertex_input			  = vertex_input_interfaces.find(vertexInputInfo);
-	auto it_pre_rasterization		  = pre_rasterization_shaders.find(preRasterizationInfo);
-	auto it_fragment_shader			  = fragment_shaders.find(fragmentShaderInfo);
-	auto it_fragment_output_interface = fragment_output_interfaces.find(fragmentOutputInfo);
-
-	vk::Pipeline pipeline = LinkPipeline({
-			(it_vertex_input != vertex_input_interfaces.end() ? it_vertex_input->second : CreateVertexInputInterface(vertexInputInfo)),
-			(it_pre_rasterization != pre_rasterization_shaders.end() ? it_pre_rasterization->second : CreatePreRasterizationShaders(preRasterizationInfo)),
-			(it_fragment_output_interface != fragment_output_interfaces.end() ? it_fragment_output_interface->second : CreateFragmentOutputInterface(fragmentOutputInfo)),
-			(it_fragment_shader != fragment_shaders.end() ? it_fragment_shader->second : CreateFragmentShader(fragmentShaderInfo))
-		},
-		info.layout,
-		std::all_of(info.stages.begin(), info.stages.end(), [](PipelineStage const& stage) {
-			return (stage.flags & PipelineStage::Flags::kLinkTimeOptimization) ==
-				PipelineStage::Flags::kLinkTimeOptimization;
-		})
-	);
-
-	return {device->shared_from_this(), pipeline, info.layout, vk::PipelineBindPoint::eGraphics, info.name};
+	return {vertexInputInfo, pre_rasterization_info, fragment_shader_info, fragment_output_info};
 }
 
-auto PipelineLibrary::CreateVertexInputInterface(VertexInputInfo const& info) -> vk::Pipeline {
+auto Device::CreateVertexInputInterface(VertexInputInfo const& info) -> vk::Pipeline {
 	vk::GraphicsPipelineLibraryCreateInfoEXT library_info{
 		.flags = vk::GraphicsPipelineLibraryFlagBitsEXT::eVertexInputInterface,
 	};
 
 	VB_VLA(vk::VertexInputAttributeDescription, attribute_descs,
 		   std::max(info.vertex_attributes.size(), size_t(1)));
-	u32 attributeSize = 0;
-	for (u32 i = 0; auto& format : info.vertex_attributes) {
-		attribute_descs[i] = vk::VertexInputAttributeDescription{
-			.location = i,
-			.binding = 0, 
-			.format = vk::Format(format),
-			.offset = attributeSize
-		};
-		switch (format) {
-		case vk::Format::eR32G32Sfloat:
-			attributeSize += 2 * sizeof(float);
-			break;
-		case vk::Format::eR32G32B32Sfloat:
-			attributeSize += 3 * sizeof(float);
-			break;
-		case vk::Format::eR32G32B32A32Sfloat:
-			attributeSize += 4 * sizeof(float);
-			break;
-		default:
-			VB_ASSERT(false, "Invalid Vertex Attribute");
-			break;
-		}
-		++i;
-	}
+	u32 attribute_size = 0;
+	CreateVertexDescriptionsFromAttributes(info.vertex_attributes, attribute_descs.data(), &attribute_size);
 
 	vk::VertexInputBindingDescription bindingDescription{
 		.binding   = 0,
-		.stride    = attributeSize,
+		.stride    = attribute_size,
 		.inputRate = vk::VertexInputRate::eVertex,
 	};
 
@@ -161,14 +87,13 @@ auto PipelineLibrary::CreateVertexInputInterface(VertexInputInfo const& info) ->
 	};
 
 	vk::Pipeline pipeline;
-	VB_VK_RESULT result = device->createGraphicsPipelines(device->pipeline_cache, 1, 
-		&pipeline_library_info, device->GetAllocator(), &pipeline);
+	VB_VK_RESULT result = createGraphicsPipelines(pipeline_cache, 1, 
+		&pipeline_library_info, GetAllocator(), &pipeline);
 	VB_CHECK_VK_RESULT(result, "Failed to create vertex input interface!");
-	vertex_input_interfaces.emplace(info, pipeline);
 	return pipeline;
 }
 
-auto PipelineLibrary::CreatePreRasterizationShaders(PreRasterizationInfo const& info) -> vk::Pipeline {
+auto Device::CreatePreRasterizationShaders(PreRasterizationInfo const& info) -> vk::Pipeline {
 	vk::GraphicsPipelineLibraryCreateInfoEXT library_info{
 		.flags = vk::GraphicsPipelineLibraryFlagBitsEXT::ePreRasterizationShaders,
 	};
@@ -178,7 +103,8 @@ auto PipelineLibrary::CreatePreRasterizationShaders(PreRasterizationInfo const& 
 	VB_VLA(vk::ShaderModuleCreateInfo, shader_module_infos, info.stages.size());
 	VB_VLA(vk::PipelineShaderStageCreateInfo, shader_stages, info.stages.size());
 	VB_VLA(std::vector<char>, bytes, info.stages.size());
-	Pipeline::CreateShaderModuleInfos({info.stages, bytes, shader_module_infos, shader_stages});
+	CreateShaderModuleInfos(info.stages, bytes.data(), shader_module_infos.data(), shader_stages.data());
+	
 	vk::PipelineDynamicStateCreateInfo dynamic_info = convert::DynamicStateInfo(info.dynamic_states);
 	vk::GraphicsPipelineCreateInfo pipeline_library_info {
 		.pNext               = &library_info,
@@ -192,14 +118,13 @@ auto PipelineLibrary::CreatePreRasterizationShaders(PreRasterizationInfo const& 
 		.layout              = info.layout,
 	};
 	vk::Pipeline pipeline;
-	VB_VK_RESULT result = device->createGraphicsPipelines(device->pipeline_cache, 1,
-		&pipeline_library_info, device->GetAllocator(), &pipeline);
+	VB_VK_RESULT result = createGraphicsPipelines(pipeline_cache, 1,
+		&pipeline_library_info, GetAllocator(), &pipeline);
 	VB_CHECK_VK_RESULT(result, "Failed to create pre-rasterization shaders!");
-	pre_rasterization_shaders.emplace(info, pipeline);
 	return pipeline;
 }
 
-auto PipelineLibrary::CreateFragmentShader(FragmentShaderInfo const& info) -> vk::Pipeline {
+auto Device::CreateFragmentShader(FragmentShaderInfo const& info) -> vk::Pipeline {
 	vk::GraphicsPipelineLibraryCreateInfoEXT library_info{
 		.flags = vk::GraphicsPipelineLibraryFlagBitsEXT::eFragmentShader,
 	};
@@ -207,7 +132,7 @@ auto PipelineLibrary::CreateFragmentShader(FragmentShaderInfo const& info) -> vk
 	VB_VLA(vk::ShaderModuleCreateInfo, shader_module_infos, info.stages.size());
 	VB_VLA(vk::PipelineShaderStageCreateInfo, shader_stages, info.stages.size());
 	VB_VLA(std::vector<char>, bytes, info.stages.size());
-	Pipeline::CreateShaderModuleInfos({info.stages, bytes, shader_module_infos, shader_stages});
+	CreateShaderModuleInfos(info.stages, bytes.data(), shader_module_infos.data(), shader_stages.data());
 
 	vk::GraphicsPipelineCreateInfo pipeline_library_info {
 		.pNext              = &library_info,
@@ -221,14 +146,13 @@ auto PipelineLibrary::CreateFragmentShader(FragmentShaderInfo const& info) -> vk
 
 	//todo: Thread pipeline cache
 	vk::Pipeline pipeline;
-	VB_VK_RESULT result = device->createGraphicsPipelines(device->pipeline_cache, 1,
-		&pipeline_library_info, device->GetAllocator(), &pipeline);
+	VB_VK_RESULT result = createGraphicsPipelines(pipeline_cache, 1,
+		&pipeline_library_info, GetAllocator(), &pipeline);
 	VB_CHECK_VK_RESULT(result, "Failed to create fragment shader!");
-	fragment_shaders.emplace(info, pipeline);
 	return pipeline;
 }
 
-auto PipelineLibrary::CreateFragmentOutputInterface(FragmentOutputInfo const& info) -> vk::Pipeline {
+auto Device::CreateFragmentOutputInterface(FragmentOutputInfo const& info) -> vk::Pipeline {
 	vk::GraphicsPipelineLibraryCreateInfoEXT library_info {
 		.flags = vk::GraphicsPipelineLibraryFlagBitsEXT::eFragmentOutputInterface,
 	};
@@ -242,8 +166,6 @@ auto PipelineLibrary::CreateFragmentOutputInterface(FragmentOutputInfo const& in
 	vk::PipelineColorBlendStateCreateInfo colorBlendState = info.color_blend;
 	colorBlendState.attachmentCount = static_cast<u32>(blend_attachments.size());
 	colorBlendState.pAttachments = blend_attachments.data();
-
-
 
 	vk::PipelineRenderingCreateInfo pipeline_rendering_info {
 		.pNext                   = &library_info,
@@ -264,33 +186,32 @@ auto PipelineLibrary::CreateFragmentOutputInterface(FragmentOutputInfo const& in
 	};
 
 	vk::Pipeline pipeline;
-	VB_VK_RESULT result = device->createGraphicsPipelines(device->pipeline_cache, 1,
+	VB_VK_RESULT result = createGraphicsPipelines(pipeline_cache, 1,
 		&pipeline_library_info, nullptr, &pipeline);
 	VB_CHECK_VK_RESULT(result, "Failed to create fragment output interface!");
-	fragment_output_interfaces.emplace(info, pipeline);
 	return pipeline;
 }
 
-auto PipelineLibrary::LinkPipeline(std::array<vk::Pipeline, 4> const& pipelines, vk::PipelineLayout layout, bool link_time_optimization) -> vk::Pipeline {
+auto Device::LinkPipeline(std::array<vk::Pipeline, 4> const& pipelines, vk::PipelineLayout layout, bool link_time_optimization) -> vk::Pipeline {
 
 	// Link the library parts into a graphics pipeline
-	vk::PipelineLibraryCreateInfoKHR linkingInfo {
+	vk::PipelineLibraryCreateInfoKHR linking_info {
 		.libraryCount = static_cast<u32>(pipelines.size()),
 		.pLibraries   = pipelines.data(),
 	};
 
-	vk::GraphicsPipelineCreateInfo pipelineInfo {
-		.pNext  = &linkingInfo,
+	vk::GraphicsPipelineCreateInfo pipeline_info {
+		.pNext  = &linking_info,
 		.layout = layout,
 	};
 
 	if (link_time_optimization) {
-		pipelineInfo.flags = vk::PipelineCreateFlagBits::eLinkTimeOptimizationEXT;
+		pipeline_info.flags = vk::PipelineCreateFlagBits::eLinkTimeOptimizationEXT;
 	}
 
 	//todo: Thread pipeline cache
 	vk::Pipeline pipeline;
-	VB_VK_RESULT result = device->createGraphicsPipelines(device->pipeline_cache, 1, &pipelineInfo, nullptr, &pipeline);
+	VB_VK_RESULT result = createGraphicsPipelines(pipeline_cache, 1, &pipeline_info, nullptr, &pipeline);
 	VB_CHECK_VK_RESULT(result, "Failed to link pipeline!");
 	return pipeline;
 }

@@ -13,18 +13,15 @@ import vulkan_hpp;
 
 #include <vulkan/vulkan.h>
 
-#include "vulkan_backend/interface/info/physical_device.hpp"
-#include "vulkan_backend/interface/instance.hpp"
+#include "vulkan_backend/interface/physical_device/info.hpp"
+#include "vulkan_backend/interface/instance/instance.hpp"
 #include "vulkan_backend/constants/constants.hpp"
-#include "vulkan_backend/interface/info/instance.hpp"
-#include "vulkan_backend/interface/physical_device.hpp"
-#include "vulkan_backend/interface/device.hpp"
-#include "vulkan_backend/functions.hpp"
+#include "vulkan_backend/interface/instance/info.hpp"
+#include "vulkan_backend/interface/physical_device/physical_device.hpp"
 #include "vulkan_backend/vk_result.hpp"
 #include "vulkan_backend/log.hpp"
 #include "vulkan_backend/macros.hpp"
 #include "vulkan_backend/util/algorithm.hpp"
-#include "vulkan_backend/util/bits.hpp"
 
 PFN_vkCreateDebugUtilsMessengerEXT  pfnVkCreateDebugUtilsMessengerEXT;
 PFN_vkDestroyDebugUtilsMessengerEXT pfnVkDestroyDebugUtilsMessengerEXT;
@@ -43,10 +40,6 @@ VKAPI_ATTR void VKAPI_CALL vkDestroyDebugUtilsMessengerEXT(VkInstance instance,
 }
 
 namespace VB_NAMESPACE {
-auto Instance::CreateDevice(PhysicalDevice* physical_device, DeviceInfo const& info) -> std::shared_ptr<Device> {
-	return std::shared_ptr<Device>(new Device(shared_from_this(), physical_device, info));
-}
-
 vk::Bool32 DebugUtilsCallback(
     vk::DebugUtilsMessageSeverityFlagBitsEXT       messageSeverity,
     vk::DebugUtilsMessageTypeFlagsEXT              messageTypes,
@@ -67,26 +60,34 @@ vk::Bool32 DebugUtilsCallback(
 	return vk::False;
 }
 
-// Instance::Instance(InstanceCreateInfo const& info) {
-// 	CreateImpl(info);
-// }
+VkBool32 DebugUtilsCallbackCompat(
+    VkDebugUtilsMessageSeverityFlagBitsEXT           messageSeverity,
+    VkDebugUtilsMessageTypeFlagsEXT                  messageTypes,
+    const VkDebugUtilsMessengerCallbackDataEXT*      pCallbackData,
+    void*                                            pUserData) {
+	return DebugUtilsCallback(vk::DebugUtilsMessageSeverityFlagBitsEXT(messageSeverity),
+							  vk::DebugUtilsMessageTypeFlagsEXT(messageTypes),
+							  reinterpret_cast<const vk::DebugUtilsMessengerCallbackDataEXT*>(pCallbackData), pUserData);
+}
+
+Instance::Instance(InstanceCreateInfo const& info) {
+	auto result = Create(info);
+	if (result != vk::Result::eSuccess) {
+		LogCreationError(result);
+	}
+	VB_ASSERT(result == vk::Result::eSuccess, "Failed to create instance!");
+}
+
+// Instance is not a owned by any other class
+Instance::~Instance() {
+	Free();
+}
 
 void Instance::LogCreationError(vk::Result result) {
 	VB_LOG_ERROR("Failed to create instance: %s", vk::to_string(result).c_str());
 }
 
-auto Instance::Create(InstanceCreateInfo const& info) -> std::shared_ptr<Instance> {
-	auto instance_shared = std::shared_ptr<Instance>(new Instance);
-	auto result          = instance_shared->CreateImpl(info);
-	if (result == vk::Result::eSuccess) {
-		return instance_shared;
-	} else {
-		instance_shared->LogCreationError(result);
-		return {};
-	}
-}
-
-auto Instance::CreateImpl(InstanceCreateInfo const& info) -> vk::Result {
+auto Instance::Create(InstanceCreateInfo const& info) -> vk::Result {
 	application_info = info.application_info;
 	if (info.allocator) {
 		allocator_object = *info.allocator;
@@ -137,6 +138,7 @@ auto Instance::CreateImpl(InstanceCreateInfo const& info) -> vk::Result {
 		validation_enabled = true;
 	}
 
+	// Reuqires new headers
 	vk::DebugUtilsMessengerCreateInfoEXT constexpr kDebugUtilsCreateInfo = {
 		.messageSeverity = vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning |
 						   // vk::DebugUtilsMessageSeverityFlagBitsEXT::eVerbose |
@@ -146,8 +148,17 @@ auto Instance::CreateImpl(InstanceCreateInfo const& info) -> vk::Result {
 			vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation |
 			vk::DebugUtilsMessageTypeFlagBitsEXT::ePerformance |
 			vk::DebugUtilsMessageTypeFlagBitsEXT::eDeviceAddressBinding,
-		.pfnUserCallback = DebugUtilsCallback,
+		// .pfnUserCallback = DebugUtilsCallback, // The problem is here
 		.pUserData = nullptr,
+	};
+
+	VkDebugUtilsMessengerCreateInfoEXT constexpr kDebugUtilsCreateInfoCompat = {
+		.sType			 = VkStructureType(kDebugUtilsCreateInfo.sType),
+		.flags			 = VkDebugUtilsMessengerCreateFlagsEXT(kDebugUtilsCreateInfo.flags),
+		.messageSeverity = VkDebugUtilsMessageSeverityFlagsEXT(kDebugUtilsCreateInfo.messageSeverity),
+		.messageType	 = VkDebugUtilsMessageTypeFlagsEXT(kDebugUtilsCreateInfo.messageType),
+		.pfnUserCallback = DebugUtilsCallbackCompat,
+		.pUserData		 = kDebugUtilsCreateInfo.pUserData,
 	};
 
 	bool requiresDebugUtils = algo::SpanContains(enabled_extensions, vk::EXTDebugUtilsExtensionName);
@@ -200,29 +211,13 @@ void Instance::CreatePhysicalDevices() {
 }
 
 auto Instance::SelectPhysicalDevice(PhysicalDeviceSelectInfo const& info) -> PhysicalDevice* {
-	VB_ASSERT(physical_devices.size() > 0, "At least one physical device must be selected");
-	PhysicalDevice* best_device = nullptr;
-	float best_score = 0.0f;
+	VB_ASSERT(physical_devices.size() > 0, "At least one physical device must be available!");
 	for (PhysicalDevice& device : physical_devices) {
-		if (!device.SupportsExtensions(info.extensions) ||
-			!device.SupportsRequiredFeatures() ||
-			!device.SupportsQueues(info.queues)) {
-			continue;
-		}
-		float score = info.rating_function(*this, device);
-		if (score > best_score) {
-			best_score = score;
-			if (best_score >= 0.0f) {
-				best_device = &device;
-			}
+		if (device.IsSuitable(info)) {
+			return &device;
 		}
 	}
-	return best_device;
-}
-
-// Instance is not a owned by any other class
-Instance::~Instance() {
-	Free();
+	return nullptr;
 }
 
 auto Instance::GetName() const -> char const* {

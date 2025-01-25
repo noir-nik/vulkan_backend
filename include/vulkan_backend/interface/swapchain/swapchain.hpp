@@ -1,7 +1,6 @@
 #pragma once
 
 #ifndef VB_USE_STD_MODULE
-#include <memory>
 #elif defined(VB_DEV)
 import std;
 #endif
@@ -12,20 +11,21 @@ import std;
 import vulkan_hpp;
 #endif
 
-#include "vulkan_backend/fwd.hpp"
-#include "vulkan_backend/types.hpp"
 #include "vulkan_backend/classes/base.hpp"
 #include "vulkan_backend/classes/structs.hpp"
-#include "vulkan_backend/interface/info/swapchain.hpp"
-#include "queue.hpp"
-#include "image.hpp"
-#include "command.hpp"
+#include "vulkan_backend/fwd.hpp"
+#include "vulkan_backend/interface/command/command.hpp"
+#include "vulkan_backend/interface/image/image.hpp"
+#include "vulkan_backend/interface/queue/queue.hpp"
+#include "vulkan_backend/interface/swapchain/info.hpp"
+#include "vulkan_backend/types.hpp"
+
 
 VB_EXPORT
 namespace VB_NAMESPACE {
-class Swapchain : public vk::SwapchainKHR, public ResourceBase<Device> {
-public:
-	Swapchain(std::shared_ptr<Device> const& device, SwapchainInfo const& info);
+class Swapchain : public vk::SwapchainKHR, public Named, public ResourceBase<Device> {
+  public:
+	Swapchain(Device& device, SwapchainInfo const& info);
 	Swapchain(Swapchain&& other) noexcept;
 	Swapchain& operator=(Swapchain&& other) noexcept;
 	~Swapchain();
@@ -35,12 +35,12 @@ public:
 	void SubmitAndPresent(vk::Queue const& submit, vk::Queue const& present);
 	void Recreate(u32 width, u32 height);
 
-	auto GetCurrentImage()  -> Image&;
+	auto GetCurrentImage() -> Image&;
 	auto GetCommandBuffer() -> Command&;
-	auto GetDirty()         -> bool;
-	auto GetFormat()        -> vk::Format;
-	auto GetExtent() const  -> vk::Extent2D;
-	auto GetImGuiInfo()     -> ImGuiInitInfo;
+	auto GetDirty() -> bool;
+	auto GetFormat() -> vk::Format;
+	auto GetExtent() const -> vk::Extent2D;
+
 	inline auto GetImageAvailableSemaphore() -> vk::Semaphore {
 		return image_available_semaphores[current_frame];
 	}
@@ -48,8 +48,8 @@ public:
 		return render_finished_semaphores[current_frame];
 	}
 	auto GetResourceTypeName() const -> char const* override;
-private:
 
+  private:
 	auto SupportsFormat(vk::Format format, vk::ImageTiling tiling, vk::FormatFeatureFlags features) -> bool;
 	void CreateSurfaceFormats();
 	auto ChooseSurfaceFormat(vk::SurfaceFormatKHR const& desired_surface_format) -> vk::SurfaceFormatKHR;
@@ -59,7 +59,7 @@ private:
 	void CreateImages();
 	void CreateSemaphores();
 	void CreateCommands(u32 queueFamilyindex);
-		
+
 	void Free() override;
 
 	vk::SurfaceCapabilitiesKHR		  surface_capabilities;
@@ -69,13 +69,10 @@ private:
 	std::vector<vk::SurfaceFormatKHR> available_surface_formats;
 	std::vector<Command>			  commands;
 	std::vector<Image>				  images;
-
-	u32 current_frame = 0;
-	u32 current_image_index = 0;
-	bool dirty = true;
-
-	SwapchainInfo info;
+	u32								  current_frame		  = 0;
+	u32								  current_image_index = 0;
+	bool							  dirty				  = true;
+	SwapchainInfo					  info;
 };
 
 } // namespace VB_NAMESPACE
-

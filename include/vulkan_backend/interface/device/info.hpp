@@ -14,9 +14,9 @@ import vulkan_hpp;
 
 #include "vulkan_backend/fwd.hpp"
 #include "vulkan_backend/types.hpp"
-#include "vulkan_backend/interface/info/queue.hpp"
+#include "vulkan_backend/interface/queue/info.hpp"
 #include "vulkan_backend/classes/structure_chain.hpp"
-#include "vulkan_backend/interface/info/descriptor.hpp"
+#include "vulkan_backend/interface/descriptor/info.hpp"
 #include "vulkan_backend/defaults/descriptor.hpp"
 #include "vulkan_backend/defaults/device.hpp"
 
@@ -24,23 +24,19 @@ import vulkan_hpp;
 VB_EXPORT
 namespace VB_NAMESPACE {
 struct DeviceInfo {	
-	// Queues to create with device
-	// By default one graphics queue is created
-	std::span<QueueInfo const> queues = defaults::kOneComputeQueue;
-
-	// Staging buffer that lives with device
-	// By default staging buffer size is 64MB
-	// Can be set to 0 to disable staging buffer creation
-	u32 staging_buffer_size = defaults::kStagingSize;
-
-	// Bindless descriptor bindings and flags
-	DescriptorInfo const& descriptor_info = defaults::kBindlessDescriptorInfo;
-
-	// Extensions to enable
+	// Queues to create with device.
+	// Leave pQueuePriorities = nullptr to use 1.0f for all queues
+	// Fill only:
+	// .queueFamilyIndex
+	// .queueCount
+	std::span<vk::DeviceQueueCreateInfo const> queues;
+	
+	// Extensions to enable like:
+	// vk::KHRSwapchainExtensionName
 	std::span<char const* const> extensions = {};
 
 	// Additional extensions (enabled if supported by selected device)
-	std::span<char const* const> optional_extensions = defaults::kOptionalDeviceExtensions;
+	std::span<char const* const> optional_extensions;
 
 	// Features to enable when creating device
 	// Their support is NOT be checked before device creation

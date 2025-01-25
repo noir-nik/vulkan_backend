@@ -11,20 +11,20 @@ import std;
 import vulkan_hpp;
 #endif
 
-#include "vulkan_backend/interface/command.hpp"
-#include "vulkan_backend/interface/instance.hpp"
-#include "vulkan_backend/interface/device.hpp"
-#include "vulkan_backend/interface/buffer.hpp"
-#include "vulkan_backend/interface/image.hpp"
-#include "vulkan_backend/interface/pipeline.hpp"
-#include "vulkan_backend/interface/descriptor.hpp"
+#include "vulkan_backend/interface/command/command.hpp"
+#include "vulkan_backend/interface/instance/instance.hpp"
+#include "vulkan_backend/interface/device/device.hpp"
+#include "vulkan_backend/interface/buffer/buffer.hpp"
+#include "vulkan_backend/interface/image/image.hpp"
+#include "vulkan_backend/interface/pipeline/pipeline.hpp"
 #include "vulkan_backend/macros.hpp"
+#include "vulkan_backend/util/enumerate.hpp"
 #include "vulkan_backend/vk_result.hpp"
 #include "vulkan_backend/log.hpp"
 
 
 namespace VB_NAMESPACE {
-Command::Command(std::shared_ptr<Device> const& device, u32 queueFamilyindex) : ResourceBase(device) {
+Command::Command(Device& device, u32 queueFamilyindex) : ResourceBase(&device) {
 	Create(queueFamilyindex);
 }
 Command::Command(Command&& other)
@@ -41,16 +41,15 @@ Command& Command::operator=(Command&& other) {
 
 Command::~Command() { Free(); }
 	
-bool Command::Copy(vk::Buffer const& dst, void const* data, u32 size, u32 dstOfsset) {
-	auto device = owner;
-	VB_LOG_TRACE("[ CmdCopy ] size: %u, offset: %u", size, device->GetStagingOffset());
-	if (device->GetStagingSize() - device->GetStagingOffset() < size) [[unlikely]] {
+bool Command::Copy(vk::Buffer const& dst, StagingBuffer& staging, void const* data, u32 size, u32 dstOfsset) {
+	VB_LOG_TRACE("[ CmdCopy ] size: %u, offset: %u", size, staging.GetOffset());
+	if (staging.GetSize() - staging.GetOffset() < size) [[unlikely]] {
 		VB_LOG_WARN("Not enough size in staging buffer to copy");
 		return false;
 	}
-	vmaCopyMemoryToAllocation(owner->vma_allocator, data, device->staging.allocation, device->GetStagingOffset(), size);
-	Copy(dst, device->staging, size, dstOfsset, device->GetStagingOffset());
-	device->staging_offset += size;
+	vmaCopyMemoryToAllocation(owner->vma_allocator, data, staging.allocation, staging.GetOffset(), size);
+	Copy(dst, staging, size, dstOfsset, staging.GetOffset());
+	staging.offset += size;
 	return true;
 }
 
@@ -72,23 +71,22 @@ void Command::Copy(vk::Buffer const& dst, vk::Buffer const& src, u32 size, u32 d
 	copyBuffer2(&copyBufferInfo);
 }
 
-bool Command::Copy(Image const& dst, void const* data, u32 size) {
-	auto device = owner;
-	VB_LOG_TRACE("[ CmdCopy ] size: %u, offset: %u", size, device->GetStagingOffset());
-	if (device->GetStagingSize() - device->GetStagingOffset() < size) [[unlikely]] {
+bool Command::Copy(Image const& dst, StagingBuffer& staging, void const* data, u32 size) {
+	VB_LOG_TRACE("[ CmdCopy ] size: %u, offset: %u", size, staging.GetOffset());
+	if (staging.GetSize() - staging.GetOffset() < size) [[unlikely]] {
 		VB_LOG_WARN("Not enough size in staging buffer to copy");
 		return false;
 	}
-	std::memcpy(device->staging_cpu + device->GetStagingOffset(), data, size);
-	Copy(dst, device->staging, device->GetStagingOffset());
-	device->staging_offset += size;
+	std::memcpy(staging.GetPtr() + staging.GetOffset(), data, size);
+	Copy(dst, staging, staging.GetOffset());
+	staging.offset += size;
 	return true;
 }
 
 void Command::Copy(Image const &dst, vk::Buffer const &src, u32 srcOffset) {
-	// VB_ASSERT(!(dst.aspect & vk::ImageAspectFlagBits::eDepth ||
-	// 			dst.aspect & vk::ImageAspectFlagBits::eStencil),
-	// 		  "CmdCopy doesnt't support depth/stencil images");
+	VB_ASSERT(!(dst.aspect & vk::ImageAspectFlagBits::eDepth ||
+				dst.aspect & vk::ImageAspectFlagBits::eStencil),
+			  "CmdCopy doesnt't support depth/stencil images");
 	vk::BufferImageCopy2 region{
 		.pNext = nullptr,
 		.bufferOffset = srcOffset,
@@ -117,9 +115,9 @@ void Command::Copy(Image const &dst, vk::Buffer const &src, u32 srcOffset) {
 
 void Command::Copy(vk::Buffer const &dst, Image const &src, u32 dstOffset,
 				vk::Offset3D imageOffset, Extent3D imageExtent) {
-	// VB_ASSERT(!(src.aspect & vk::ImageAspectFlagBits::eDepth ||
-	// 			src.aspect & vk::ImageAspectFlagBits::eStencil),
-	// 		"CmdCopy doesn't support depth/stencil images");
+	VB_ASSERT(!(src.aspect & vk::ImageAspectFlagBits::eDepth ||
+				src.aspect & vk::ImageAspectFlagBits::eStencil),
+			"CmdCopy doesn't support depth/stencil images");
 	vk::BufferImageCopy2 region{
 		.bufferOffset = dstOffset,
 		.bufferRowLength = 0,
@@ -189,15 +187,15 @@ void Command::Barrier(Image& img, ImageBarrier const& barrier) {
 void Command::Barrier(vk::Buffer const& buf, BufferBarrier const& barrier) {
 	vk::BufferMemoryBarrier2 barrier2 {
 		.pNext               = nullptr,
-		.srcStageMask        = (vk::PipelineStageFlags2) barrier.memoryBarrier.srcStageMask,
-		.srcAccessMask       = (vk::AccessFlags2)        barrier.memoryBarrier.srcAccessMask,
-		.dstStageMask        = (vk::PipelineStageFlags2) barrier.memoryBarrier.dstStageMask,
-		.dstAccessMask       = (vk::AccessFlags2)        barrier.memoryBarrier.dstAccessMask,
-		.srcQueueFamilyIndex =                           barrier.srcQueueFamilyIndex,
-		.dstQueueFamilyIndex =                           barrier.dstQueueFamilyIndex,
-		.buffer              =                           buf,
-		.offset              = (vk::DeviceSize)          barrier.offset,
-		.size                = (vk::DeviceSize)          barrier.size
+		.srcStageMask        = barrier.memoryBarrier.srcStageMask,
+		.srcAccessMask       = barrier.memoryBarrier.srcAccessMask,
+		.dstStageMask        = barrier.memoryBarrier.dstStageMask,
+		.dstAccessMask       = barrier.memoryBarrier.dstAccessMask,
+		.srcQueueFamilyIndex = barrier.srcQueueFamilyIndex,
+		.dstQueueFamilyIndex = barrier.dstQueueFamilyIndex,
+		.buffer              = buf,
+		.offset              = barrier.offset,
+		.size                = barrier.size
 	};
 
 	vk::DependencyInfo dependency = {
@@ -291,11 +289,11 @@ void Command::BeginRendering(RenderingInfo const& info) {
 	// auto& clearDepth = info.clearDepth;
 	// auto& clearStencil = info.clearStencil;
 
-	vk::Rect2D renderArea = info.renderArea;
+	vk::Rect2D renderArea = info.render_area;
 	if (renderArea == vk::Rect2D{}) {
-		if (info.colorAttachs.size() > 0) {
-			renderArea.extent.width = info.colorAttachs[0].colorImage.info.extent.width;
-			renderArea.extent.height = info.colorAttachs[0].colorImage.info.extent.height;
+		if (info.color_attachments.size() > 0) {
+			renderArea.extent.width = info.color_attachments[0].color_image.info.extent.width;
+			renderArea.extent.height = info.color_attachments[0].color_image.info.extent.height;
 		} else if (info.depth.image) {
 			renderArea.extent.width = info.depth.image.info.extent.width;
 			renderArea.extent.height = info.depth.image.info.extent.height;
@@ -305,21 +303,20 @@ void Command::BeginRendering(RenderingInfo const& info) {
 	vk::Offset2D offset(renderArea.offset.x, renderArea.offset.y);
 	vk::Extent2D extent(renderArea.extent.width, renderArea.extent.height);
 
-	VB_VLA(vk::RenderingAttachmentInfo, colorAttachInfos, info.colorAttachs.size());
-	for (auto i = 0; auto& colorAttach: info.colorAttachs) {
+	VB_VLA(vk::RenderingAttachmentInfo, colorAttachInfos, info.color_attachments.size());
+	for (auto [i, color_attach]: util::enumerate(info.color_attachments)) {
 		colorAttachInfos[i] = {
-			.imageView   = colorAttach.colorImage.view,
-			.imageLayout = colorAttach.colorImage.layout,
-			.loadOp      = colorAttach.loadOp,
-			.storeOp     = colorAttach.storeOp,
-			.clearValue  = *reinterpret_cast<vk::ClearValue const*>(&colorAttach.clearValue),
+			.imageView   = color_attach.color_image.view,
+			.imageLayout = color_attach.color_image.layout,
+			.loadOp      = color_attach.load_op,
+			.storeOp     = color_attach.store_op,
+			.clearValue  = *reinterpret_cast<vk::ClearValue const*>(&color_attach.clear_value),
 		};
-		if (colorAttach.resolveImage) {
+		if (color_attach.resolve_image) {
 			colorAttachInfos[i].resolveMode        = vk::ResolveModeFlagBits::eAverage;
-			colorAttachInfos[i].resolveImageView   = colorAttach.resolveImage.view;
-			colorAttachInfos[i].resolveImageLayout = vk::ImageLayout(colorAttach.resolveImage.layout);
+			colorAttachInfos[i].resolveImageView   = color_attach.resolve_image.view;
+			colorAttachInfos[i].resolveImageLayout = vk::ImageLayout(color_attach.resolve_image.layout);
 		}
-		++i;
 	}
 
 	vk::RenderingInfoKHR renderingInfo{
@@ -328,7 +325,7 @@ void Command::BeginRendering(RenderingInfo const& info) {
 			.offset = offset,
 			.extent = extent,
 		},
-		.layerCount = info.layerCount,
+		.layerCount = info.layer_count,
 		.viewMask = 0,
 		.colorAttachmentCount = static_cast<u32>(colorAttachInfos.size()),
 		.pColorAttachments = colorAttachInfos.data(),
@@ -341,13 +338,13 @@ void Command::BeginRendering(RenderingInfo const& info) {
 		depthAttachInfo = {
 			.imageView   = info.depth.image.view,
 			.imageLayout = info.depth.image.layout,
-			.loadOp      = info.depth.loadOp,
-			.storeOp     = info.depth.storeOp,
+			.loadOp      = info.depth.load_op,
+			.storeOp     = info.depth.store_op,
 			// .storeOp = info.depth.image.usage & vk::ImageUsageFlagBits::eTransientAttachment 
 			//	? vk::AttachmentStoreOp::eDontCare
 			//	: vk::AttachmentStoreOp::eStore,
 			.clearValue {
-				.depthStencil = { info.depth.clearValue.depth, info.depth.clearValue.stencil }
+				.depthStencil = { info.depth.clear_value.depth, info.depth.clear_value.stencil }
 			}
 		};
 		renderingInfo.pDepthAttachment = &depthAttachInfo;
@@ -357,10 +354,10 @@ void Command::BeginRendering(RenderingInfo const& info) {
 		stencilAttachInfo = {
 			.imageView   = info.stencil.image.view,
 			.imageLayout = info.stencil.image.layout,
-			.loadOp      = info.stencil.loadOp,
-			.storeOp     = info.stencil.storeOp,
+			.loadOp      = info.stencil.load_op,
+			.storeOp     = info.stencil.store_op,
 			.clearValue {
-				.depthStencil = { info.stencil.clearValue.depth, info.stencil.clearValue.stencil }
+				.depthStencil = { info.stencil.clear_value.depth, info.stencil.clear_value.stencil }
 			}
 		};
 		renderingInfo.pStencilAttachment = &stencilAttachInfo;
@@ -395,12 +392,14 @@ void Command::EndRendering() {
 	endRendering();
 }
 
-void Command::BindPipeline(Pipeline const& pipeline) {
+void Command::BindPipelineAndDescriptorSet(Pipeline const& pipeline, vk::DescriptorSet const& descriptor_set) {
 	bindPipeline(pipeline.point, pipeline);
 	// TODO(nm): bind only if not compatible for used descriptor sets or push constant range
-	// ref:
-	// https://registry.khronos.org/vulkan/specs/1.2-extensions/html/vkspec.html#descriptorsets-compatibility
-	bindDescriptorSets(pipeline.point, pipeline.layout, 0, 1, &owner->descriptor.set, 0, nullptr);
+	// ref: https://registry.khronos.org/vulkan/specs/1.2-extensions/html/vkspec.html#descriptorsets-compatibility
+	bindDescriptorSets(pipeline.point, pipeline.layout, 0, 1, &descriptor_set, 0, nullptr);
+	// Vulkan 1.4 or VK_KHR_maintenance6
+	// vk::BindDescriptorSetsInfo{}
+	// bindDescriptorSets2()
 }
 
 void Command::PushConstants(Pipeline const& pipeline, void const* data, u32 size) {
@@ -501,7 +500,6 @@ void Command::Create(u32 queueFamilyindex) {
 	std::tie(result, pool) = owner->createCommandPool(poolInfo, owner->owner->allocator);
 	VB_CHECK_VK_RESULT(result, "Failed to create command pool!");
 
-
 	vk::CommandBufferAllocateInfo allocInfo {
 		.level = vk::CommandBufferLevel::ePrimary,
 		.commandBufferCount = 1,
@@ -510,15 +508,14 @@ void Command::Create(u32 queueFamilyindex) {
 
 	vk::CommandBuffer commandBuffer;
 	result = owner->allocateCommandBuffers(&allocInfo, &commandBuffer);
-	vk::CommandBuffer::operator=(commandBuffer);
-	
 	VB_CHECK_VK_RESULT(result, "Failed to allocate command buffer!");
+	vk::CommandBuffer::operator=(commandBuffer);
 
-	vk::FenceCreateInfo fenceInfo{
+	vk::FenceCreateInfo fence_info{
 		.flags = vk::FenceCreateFlagBits::eSignaled,
 	};
 
-	std::tie(result, fence) = owner->createFence(fenceInfo, owner->owner->allocator);
+	std::tie(result, fence) = owner->createFence(fence_info, owner->owner->allocator);
 	VB_CHECK_VK_RESULT(result, "Failed to create fence!");
 }
 

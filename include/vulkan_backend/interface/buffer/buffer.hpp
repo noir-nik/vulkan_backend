@@ -2,7 +2,6 @@
 
 #ifndef VB_USE_STD_MODULE
 #include <string_view>
-#include <memory>
 #elif defined(VB_DEV)
 import std;
 #endif
@@ -22,18 +21,16 @@ import vk_mem_alloc;
 #include "vulkan_backend/fwd.hpp"
 #include "vulkan_backend/types.hpp"
 #include "vulkan_backend/classes/base.hpp"
-#include "vulkan_backend/classes/structs.hpp"
 #include "vulkan_backend/classes/gpu_resource.hpp"
-#include "vulkan_backend/interface/info/buffer.hpp"
+#include "vulkan_backend/interface/buffer/info.hpp"
 
 VB_EXPORT
 namespace VB_NAMESPACE {
-// Buffer handle
-using BufferRef = std::shared_ptr<Buffer>;
-
 class Buffer : public vk::Buffer, public Named, public GpuResource, public ResourceBase<Device> {
 public:
-	Buffer(std::shared_ptr<Device> const& device, BufferInfo const& info);
+	Buffer(Device& device, BufferInfo const& info);
+	Buffer(Buffer&& other) noexcept;
+	Buffer& operator=(Buffer&& other) noexcept;
 	~Buffer();
 	// Get actual size after alignment
 	auto GetSize() const -> u64;
@@ -43,7 +40,7 @@ public:
 
 	// Get mapped data pointer (Only CPU)
 	// Doesn't require mapping or unmapping, can be called any number of times, 
-	auto GetMappedData()-> void*;
+	auto GetMappedData() const -> void*;
 
 	// Map buffer (Only CPU)
 	// Buffer must be unmapped the same number of times as it was mapped
@@ -53,23 +50,38 @@ public:
 	void Unmap();
 
 	// Get pointer to owning device
-	inline auto GetDevice() -> Device* { return device; }
+	inline auto GetDevice() const -> Device& { return *owner; }
 	
 	// ResourceBase override
 	auto GetResourceTypeName() const -> char const* override;
+
+	inline auto GetBinding() const -> u32 { return info.binding; }
+	inline void SetBinding(u32 binding) { info.binding = binding; }
 private:
 	Buffer() = default;
 	friend Command;
 	friend Device;
-	void Create(Device* device, BufferInfo const& info);
+	void Create(Device& device, BufferInfo const& info);
 	void Free() override;
+	void AddUsageFlags(vk::BufferUsageFlags & usage, u64& size);
 
 	// This is needed for staging buffer to be member of Device,
 	// Its shared_ptr is not initialized
-	Device*                 device = nullptr;
 	VmaAllocation           allocation;
-	VmaAllocationInfo       allocationInfo;
+	VmaAllocationInfo       allocation_info;
 	BufferInfo              info;
 };
+
+class StagingBuffer : public Buffer {
+public:
+	StagingBuffer(Device& device, u32 size, std::string_view name = "Staging Buffer");
+
+	void Reset();
+	auto GetPtr() const -> u8*;
+	auto GetOffset() const -> u32;
+
+	u32 offset = 0;
+};
+
 } // namespace VB_NAMESPACE
 

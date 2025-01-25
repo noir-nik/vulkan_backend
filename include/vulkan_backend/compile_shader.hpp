@@ -7,7 +7,7 @@ import std;
 #endif
 
 #include "vulkan_backend/config.hpp"
-#include "vulkan_backend/interface/info/pipeline.hpp"
+#include "vulkan_backend/interface/pipeline/info.hpp"
 
 VB_EXPORT
 namespace VB_NAMESPACE {

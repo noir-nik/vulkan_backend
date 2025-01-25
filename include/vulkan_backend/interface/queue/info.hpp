@@ -11,9 +11,13 @@ import vulkan_hpp;
 VB_EXPORT
 namespace VB_NAMESPACE {	
 struct QueueInfo {
+	static constexpr vk::QueueFlags kUndesiredFlagsForDedicatedCompute = vk::QueueFlagBits::eGraphics;
+	static constexpr vk::QueueFlags kUndesiredFlagsForDedicatedTransfer = vk::QueueFlagBits::eGraphics | vk::QueueFlagBits::eCompute;
 	// More flags from respective queue family are added when queue is created
 	vk::QueueFlags    flags             = vk::QueueFlagBits::eGraphics;
-	bool              separate_family   = false;    // Prefer separate family
+	// flags are ignored if flags_extra is specified on creation
+	vk::QueueFlags    undesired_flags   = {};
+	// Require surface support
 	vk::SurfaceKHR    supported_surface = nullptr;
 };
 } // namespace VB_NAMESPACE

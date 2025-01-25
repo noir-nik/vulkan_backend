@@ -1,5 +1,4 @@
 #ifndef VB_USE_STD_MODULE
-#include <memory>
 #else
 import std;
 #endif
@@ -11,7 +10,7 @@ import vulkan_hpp;
 #endif
 
 #include "vulkan_backend/functions.hpp"
-#include "vulkan_backend/interface/instance.hpp"
+#include "vulkan_backend/interface/instance/instance.hpp"
 
 namespace VB_NAMESPACE {
 auto SetupStructureChain(std::span<vk::BaseOutStructure* const> structures) -> vk::BaseOutStructure& {

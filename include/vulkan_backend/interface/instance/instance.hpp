@@ -1,7 +1,6 @@
 #pragma once
 
 #ifndef VB_USE_STD_MODULE
-#include <memory>
 #include <span>
 #include <unordered_set>
 #elif defined(VB_DEV)
@@ -9,27 +8,24 @@ import std;
 #endif
 
 #include "vulkan_backend/classes/no_copy_no_move.hpp"
-#include "vulkan_backend/interface/info/physical_device.hpp"
-#include "vulkan_backend/interface/info/instance.hpp"
+#include "vulkan_backend/interface/physical_device/info.hpp"
+#include "vulkan_backend/interface/instance/info.hpp"
 #include "vulkan_backend/classes/base.hpp"
 #include "vulkan_backend/fwd.hpp"
-#include "vulkan_backend/interface/info/device.hpp"
-// #include "vulkan_backend/interface/physical_device.hpp"
+#include "vulkan_backend/interface/device/info.hpp"
+// #include "vulkan_backend/interface/physical_device/physical_device.hpp"
 
 VB_EXPORT
 namespace VB_NAMESPACE {
-class Instance : public vk::Instance, public OwnerBase<Instance> {
+class Instance : public vk::Instance, NoCopyNoMove {
 public:
 	// static factory, returns {} on fail
-	static auto Create(InstanceCreateInfo const& info) -> std::shared_ptr<Instance>;
+	Instance(InstanceCreateInfo const& info);
 	~Instance();
-	
-	// Device creation factory function
-	[[nodiscard]] auto CreateDevice(PhysicalDevice* physical_device, DeviceInfo const& info)
-		-> std::shared_ptr<Device>;
 
 	// Selects a physical device, checks if it supports the required extensions and queues.
 	// returns: selected physical device that meet the requirements or nullptr if none was selected
+	// Override this function in derived classes for custom selection
 	auto SelectPhysicalDevice(PhysicalDeviceSelectInfo const& info = {}) -> PhysicalDevice*;
 
 	// Getters
@@ -50,12 +46,11 @@ public:
 	vk::ApplicationInfo                          application_info;
 	bool										 validation_enabled = false;
   private:
-	vk::AllocationCallbacks allocator_object = {};
-	Instance() = default;
-	auto CreateImpl(InstanceCreateInfo const& info) -> vk::Result;
+	auto Create(InstanceCreateInfo const& info) -> vk::Result;
 	void LogCreationError(vk::Result result);
 	void CreatePhysicalDevices();
 	void Free();
+	vk::AllocationCallbacks allocator_object = {};
 };
 } // namespace VB_NAMESPACE
 

@@ -18,21 +18,22 @@ VB_EXPORT
 namespace VB_NAMESPACE {
 namespace algo {
 inline bool SupportsExtension(std::span<vk::ExtensionProperties const> available_extensions,
-					   std::string_view							extension) {
+							  std::string_view						   extension) {
 	return std::any_of(available_extensions.begin(), available_extensions.end(),
-		[&extension](vk::ExtensionProperties const& available_extension) {
-			return available_extension.extensionName == extension;
-		});
+					   [&extension](vk::ExtensionProperties const& available_extension) {
+						   return available_extension.extensionName == extension;
+					   });
 };
 
 inline bool SupportsExtensions(std::span<vk::ExtensionProperties const> available_extensions,
-						std::span<char const* const>			 extensions) {
-	return std::all_of(extensions.begin(), extensions.end(), [available_extensions](std::string_view extension) {
-		return std::any_of(available_extensions.begin(), available_extensions.end(),
-			[&extension](vk::ExtensionProperties const& available_extension) {
-				return available_extension.extensionName == extension;
-			});
-	});
+							   std::span<char const* const>				extensions) {
+	return std::all_of(
+		extensions.begin(), extensions.end(), [available_extensions](std::string_view extension) {
+			return std::any_of(available_extensions.begin(), available_extensions.end(),
+							   [&extension](vk::ExtensionProperties const& available_extension) {
+								   return available_extension.extensionName == extension;
+							   });
+		});
 }
 
 inline bool SpanContains(std::span<char const* const> span, std::string_view value) {

@@ -12,20 +12,21 @@ import std;
 import vulkan_hpp;
 #endif
 
-#include "vulkan_backend/types.hpp"
 #include "vulkan_backend/classes/structs.hpp"
+#include "vulkan_backend/interface/descriptor/descriptor.hpp"
+#include "vulkan_backend/types.hpp"
+
 
 VB_EXPORT
 namespace VB_NAMESPACE {
 struct BufferInfo {
-	u32 static constexpr kBindingNone = ~0u;
-	
-	u64                     size;
-	vk::BufferUsageFlags    usage;
-	MemoryFlags             memory = Memory::GPU;
-	std::string_view        name = "";
+	u64					 size;
+	vk::BufferUsageFlags usage;
+	MemoryFlags			 memory = Memory::GPU;
+	std::string_view	 name	= "";
 	// binding to write bindless descriptor to (Only GPU)
-	u32                     binding = kBindingNone;
+	BindlessDescriptor* descriptor = nullptr;
+	u32					binding;
 };
 
 } // namespace VB_NAMESPACE

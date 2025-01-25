@@ -87,16 +87,4 @@ struct Image2DInfo : public vk::ImageCreateInfo {
 	vk::SamplerCreateInfo& sampler = defaults::linearSampler;
 };
 
-struct ImGuiInitInfo {
-	vk::Instance                      Instance;
-	vk::PhysicalDevice                PhysicalDevice;
-	vk::Device                        Device;
-	vk::DescriptorPool                DescriptorPool;
-	u32                               MinImageCount;
-	u32                               ImageCount;
-	vk::PipelineCache                 PipelineCache;
-	bool                              UseDynamicRendering;
-	const vk::AllocationCallbacks*    Allocator;
-};
-
 } // VB_NAMESPACE

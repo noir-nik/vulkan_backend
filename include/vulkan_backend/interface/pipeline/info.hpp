@@ -28,6 +28,7 @@ struct Source  {
 		RawSlang,
 		RawSpirv,
 	};
+	// file or string with shader code
 	std::string_view data;
 	Type type = File;
 	bool operator==(Source const& other) const { return data == other.data && type == other.type; }
@@ -90,24 +91,10 @@ struct PipelineLayoutInfo {
 	}
 };
 
-struct PipelineStageCreateInfo {
-	Device* device;
-	std::span<const PipelineStage> stages;
-	std::span<vk::ShaderModule> p_shader_modules;
-	std::span<vk::PipelineShaderStageCreateInfo> p_shader_stages;
-};
-
-struct PipelineShaderModuleCreateInfo {
-	std::span<const PipelineStage> stages;
-	std::span<std::vector<char>> p_bytes;
-	std::span<vk::ShaderModuleCreateInfo> p_shader_module_create_infos;
-	std::span<vk::PipelineShaderStageCreateInfo> p_shader_stages;
-};
-
 // Necessary for any pipeline creation
 struct PipelineInfo {
 	std::span<PipelineStage const> stages;
-	vk::PipelineLayout			   layout = nullptr; // == nullptr to use bindless pipeline layout of device
+	vk::PipelineLayout			   layout;
 	std::string_view			   name	  = "";
 };
 

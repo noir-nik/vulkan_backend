@@ -66,4 +66,6 @@ private:
 
 void SetLogLevel(LogLevel level);
 
+void SetMessageCallback(MessageCallback callback);
+
 } // namespace VB_NAMESPACE

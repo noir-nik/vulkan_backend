@@ -37,20 +37,20 @@ struct FeatureChain {
 		features2.pNext = &vulkan11;
 		vulkan11.pNext = &vulkan12;
 		vulkan12.pNext = &vulkan13;
-		vulkan13.pNext = &graphics_pipeline_library;
 		if (enable_required) {
 			EnableRequiredFeatures(vulkan12);
 			EnableRequiredFeatures(vulkan13);
 		}
 	};
+
 	void LinkNextStructure(vk::BaseOutStructure* const next) {
-		graphics_pipeline_library.pNext = next;
+		vulkan13.pNext = next;
 	};
-	vk::PhysicalDeviceFeatures2                             features2;
-	vk::PhysicalDeviceVulkan11Features                      vulkan11;
-	vk::PhysicalDeviceVulkan12Features                      vulkan12;
-	vk::PhysicalDeviceVulkan13Features                      vulkan13;
-	vk::PhysicalDeviceGraphicsPipelineLibraryFeaturesEXT    graphics_pipeline_library;
+
+	vk::PhysicalDeviceFeatures2		   features2;
+	vk::PhysicalDeviceVulkan11Features vulkan11;
+	vk::PhysicalDeviceVulkan12Features vulkan12;
+	vk::PhysicalDeviceVulkan13Features vulkan13;
 };
 
 FeatureChain inline kRequiredFeatures{true};
@@ -61,17 +61,16 @@ struct PropertiesChain {
 		properties2.pNext = &vulkan11;
 		vulkan11.pNext = &vulkan12;
 		vulkan12.pNext = &vulkan13;
-		vulkan13.pNext = &graphics_pipeline_library;
 	}
+	
 	void LinkNextStructure(vk::BaseOutStructure* const next) {
-		graphics_pipeline_library.pNext = next;
+		vulkan13.pNext = next;
 	}
 
-	vk::PhysicalDeviceProperties2                             properties2;             // Vulkan 1.0 properties
-	vk::PhysicalDeviceVulkan11Properties                      vulkan11;                // Vulkan 1.1 properties
-	vk::PhysicalDeviceVulkan12Properties                      vulkan12;                // Vulkan 1.2 properties
-	vk::PhysicalDeviceVulkan13Properties                      vulkan13;                // Vulkan 1.3 properties
-	vk::PhysicalDeviceGraphicsPipelineLibraryPropertiesEXT    graphics_pipeline_library; // Graphics pipeline library
+	vk::PhysicalDeviceProperties2		 properties2; // Vulkan 1.0 properties
+	vk::PhysicalDeviceVulkan11Properties vulkan11;	  // Vulkan 1.1 properties
+	vk::PhysicalDeviceVulkan12Properties vulkan12;	  // Vulkan 1.2 properties
+	vk::PhysicalDeviceVulkan13Properties vulkan13;	  // Vulkan 1.3 properties
 };
 } // namespace VB_NAMESPACE
 #pragma once

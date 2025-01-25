@@ -8,7 +8,7 @@ import vulkan_hpp;
 
 #include "vulkan_backend/config.hpp"
 #include "vulkan_backend/types.hpp"
-#include "vulkan_backend/interface/info/descriptor.hpp"
+#include "vulkan_backend/interface/descriptor/info.hpp"
 
 VB_EXPORT
 namespace VB_NAMESPACE {	

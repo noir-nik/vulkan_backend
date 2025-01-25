@@ -15,8 +15,8 @@ import vulkan_hpp;
 #include "vulkan_backend/fwd.hpp"
 #include "vulkan_backend/types.hpp"
 #include "vulkan_backend/classes/no_copy_no_move.hpp"
-#include "vulkan_backend/structs/command.hpp"
 #include "vulkan_backend/classes/structure_chain.hpp"
+#include "vulkan_backend/interface/physical_device/info.hpp"
 
 VB_EXPORT
 namespace VB_NAMESPACE {
@@ -38,24 +38,32 @@ public:
 	inline auto GetProperties()  const -> vk::PhysicalDeviceProperties  const& { return base_properties.properties2.properties; }
 	inline auto GetProperties2() const -> vk::PhysicalDeviceProperties2 const& { return base_properties.properties2; }
 	inline auto GetMemoryProperties()  -> vk::PhysicalDeviceMemoryProperties2 const& { return memory_properties; }
+	inline auto GetQueueProperties()   -> std::span<vk::QueueFamilyProperties2> { return queue_family_properties; }
 	
-	// Get best fitting queue family index or error code if strict requirements not met
-	auto GetQueueFamilyIndex(QueueFamilyIndexRequest const& request) -> std::pair<QueueFamilyIndexRequest::Result, u32>;
 	bool SupportsExtension(std::string_view extension) const;
 	bool SupportsExtensions(std::span<char const* const> extensions) const;
 	bool SupportsQueues(std::span<QueueInfo const> queues) const;
 	bool SupportsSurface(u32 queue_family_index, vk::SurfaceKHR const surface) const;
-	auto GetDedicatedTransferQueueFamilyIndex() const -> u32;
-	auto GetDedicatedComputeQueueFamilyIndex() const -> u32;
+	bool IsSuitable(PhysicalDeviceSelectInfo const& info = {}) const;
+	
+
+	// returns nullptr if not found
+	auto GetDedicatedTransferQueueFamily() const -> vk::QueueFamilyProperties const*;
+	auto GetDedicatedComputeQueueFamily() const -> vk::QueueFamilyProperties const*;
 	auto GetQueueCount(u32 queue_family_index) const -> u32;
 
-	auto FilterSupportedExtensions(std::span<char const* const> extensions) const -> std::vector<std::string_view>;
+	// Returns fitting queue family index or kQueueNotFound
+	auto FindQueueFamilyIndex(QueueInfo const& info, vk::QueueFlags undesired_flags = {})
+		-> u32;
+	// auto GetQueueFamilyIndex(vk::QueueFamilyProperties* queue_family) const -> u32;
+	auto FilterSupportedExtensions(std::span<char const* const> extensions) const
+		-> std::vector<std::string_view>;
 	bool SupportsRequiredFeatures() const;
 	// Only fills:
 	// .queueFamilyIndex
 	// .queueCount
-	auto GetQueueCreateInfos(std::span<QueueInfo const> infos)
-		-> std::vector<vk::DeviceQueueCreateInfo>;
+	// auto GetQueueCreateInfos(std::span<QueueInfo const> infos)
+		// -> std::vector<vk::DeviceQueueCreateInfo>;
 
 	auto GetName() const -> char const*;
 	auto GetResourceTypeName() const -> char const*;
@@ -65,7 +73,7 @@ public:
 	// vk::PhysicalDeviceShaderAtomicFloatFeaturesEXT atomic_features;
 	// In PhysicalDeviceDerived constructor call:
 	// base_features.LinkNextStructure(reinterpret_cast<vk::BaseOutStructure*>(&atomic_features));
-	
+
 	// Features
 	FeatureChain base_features{true};
 

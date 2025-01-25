@@ -12,26 +12,27 @@ import std;
 import vulkan_hpp;
 #endif
 
-#include "vulkan_backend/types.hpp"
 #include "vulkan_backend/classes/structs.hpp"
 #include "vulkan_backend/defaults/image.hpp"
+#include "vulkan_backend/interface/descriptor/descriptor.hpp"
+#include "vulkan_backend/types.hpp"
+
 
 VB_EXPORT
 namespace VB_NAMESPACE {
 struct ImageInfo {
-	u32 static constexpr kBindingNone = ~0u;
 	// Necessary data
-	Extent3D                     extent;
-	vk::Format                   format;
-	vk::ImageUsageFlags          usage;
-	// Optional
-	// bindings to write bindless descriptor to
-	u32                          binding = kBindingNone;
+	Extent3D			extent;
+	vk::Format			format;
+	vk::ImageUsageFlags usage;
+	// bindings to write bindless descriptor to (Only GPU)
+	BindlessDescriptor* descriptor = nullptr;
+	u32					binding;
 	// std::span<u32>               bindings;
-	vk::SampleCountFlagBits      samples = vk::SampleCountFlagBits::e1;
+	vk::SampleCountFlagBits		 samples = vk::SampleCountFlagBits::e1;
 	vk::SamplerCreateInfo const& sampler = defaults::linearSampler;
-	u32                          layers  = 1;
-	std::string_view             name    = "";
+	u32							 layers	 = 1;
+	std::string_view			 name	 = "";
 };
 
 struct SwapchainImageInfo {

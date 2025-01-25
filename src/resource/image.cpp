@@ -19,19 +19,19 @@ import vk_mem_alloc;
 
 #include <vulkan/vulkan.h>
 
-#include "vulkan_backend/interface/descriptor.hpp"
-#include "vulkan_backend/interface/device.hpp"
-#include "vulkan_backend/interface/image.hpp"
-#include "vulkan_backend/interface/instance.hpp"
+#include "vulkan_backend/interface/descriptor/descriptor.hpp"
+#include "vulkan_backend/interface/device/device.hpp"
+#include "vulkan_backend/interface/image/image.hpp"
+#include "vulkan_backend/interface/physical_device/physical_device.hpp"
 #include "vulkan_backend/log.hpp"
 #include "vulkan_backend/util/bits.hpp"
 #include "vulkan_backend/vk_result.hpp"
 #include "vulkan_backend/macros.hpp"
 
 namespace VB_NAMESPACE {
-Image::Image(std::shared_ptr<Device> const& device, ImageInfo const& info)
-	: Named(info.name), ResourceBase(device), info(info) {
-	VB_LOG_TRACE("[ Create ] type = %s, name = %s", GetResourceTypeName(), GetName());
+Image::Image(Device& device, ImageInfo const& info)
+	: Named(info.name), ResourceBase(&device), info(info) {
+	VB_LOG_TRACE("[ Create ] type = %s, name = %s", GetResourceTypeName(), GetName().data());
 	Create(info);
 }
 
@@ -145,8 +145,8 @@ void Image::Create(ImageInfo const& info) {
 			VB_CHECK_VK_RESULT(result, "Failed to create image view!");
 		}
 	}
-	if (info.binding != ImageInfo::kBindingNone) {
-		SetResourceID(owner->descriptor.PopID(info.binding));
+	if (info.descriptor != nullptr) {
+		SetResourceID(info.descriptor->PopID(info.binding));
 
 		vk::ImageLayout newLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
 		if (info.usage & vk::ImageUsageFlagBits::eSampled) {
@@ -171,14 +171,19 @@ void Image::Create(ImageInfo const& info) {
 		};
 
 		vk::WriteDescriptorSet write = {
-			.dstSet			 = owner->descriptor.set,
+			.dstSet			 = info.descriptor->set,
 			.dstBinding		 = info.binding,
 			.dstArrayElement = GetResourceID(),
 			.descriptorCount = 1,
-			.descriptorType	 = owner->descriptor.GetBindingInfo(info.binding).descriptorType,
+			.descriptorType	 = info.descriptor->GetBindingInfo(info.binding).descriptorType,
 			.pImageInfo		 = &descriptorInfo,
 		};
 		owner->updateDescriptorSets(write, {});
+	} else {
+		if (info.usage & vk::ImageUsageFlagBits::eSampled ||
+			info.usage & vk::ImageUsageFlagBits::eStorage) {
+			VB_LOG_WARN("Gpu image created without descriptor!");
+		}
 	}
 
 	SetDebugUtilsName(info.name.data());
@@ -195,6 +200,7 @@ void Image::SetDebugUtilsName(char const* name) {
 	});
 	VB_CHECK_VK_RESULT(result, "Failed to set image debug utils object name!");
 }
+
 void Image::SetDebugUtilsViewName(char const* name) {
 	VB_VK_RESULT result = owner->setDebugUtilsObjectNameEXT({
 		.objectType	  = vk::ObjectType::eImageView,
@@ -205,7 +211,7 @@ void Image::SetDebugUtilsViewName(char const* name) {
 }
 
 void Image::Free() {
-	VB_LOG_TRACE("[ Free ] type = %s, name = %s", GetResourceTypeName(), GetName());
+	VB_LOG_TRACE("[ Free ] type = %s, name = %s", GetResourceTypeName(), GetName().data());
 	if (!fromSwapchain) {
 		for (VkImageView layerView : layersView) {
 			owner->destroyImageView(layerView, owner->GetAllocator());
@@ -214,7 +220,7 @@ void Image::Free() {
 		owner->destroyImageView(view, owner->GetAllocator());
 		vmaDestroyImage(owner->vma_allocator, *this, allocation);
 		if (GetResourceID() != kNullID) {
-			owner->descriptor.PushID(GetBinding(), GetResourceID());
+			info.descriptor->PushID(GetBinding(), GetResourceID());
 		}
 	}
 }
