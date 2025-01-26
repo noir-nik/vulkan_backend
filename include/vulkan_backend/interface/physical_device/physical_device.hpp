@@ -25,10 +25,13 @@ public:
 	// using vk::PhysicalDevice::PhysicalDevice;
 	PhysicalDevice(vk::PhysicalDevice const& physical_device) : vk::PhysicalDevice(physical_device) {};
 	static constexpr u32 kQueueNotFound = ~0u;
-	// Get all information from Vulkan API
+	// Get all data from Vulkan API (features, properties, available
+	// extensions, memory properties, queue families)
 	void GetDetails();
 
 	// Getters
+	inline auto GetFeatureChain()      -> FeatureChainBase&                    { return base_features; }
+	inline auto GetPropertiesChain()   -> PropertiesChainBase&                 { return base_properties; }
 	inline auto GetFeatures()          -> vk::PhysicalDeviceFeatures&          { return base_features.features2.features; }
 	inline auto GetFeatures2()         -> vk::PhysicalDeviceFeatures2&         { return base_features.features2; }
 	inline auto GetProperties()        -> vk::PhysicalDeviceProperties&        { return base_properties.properties2.properties; }
@@ -42,15 +45,21 @@ public:
 	
 	bool SupportsExtension(std::string_view extension) const;
 	bool SupportsExtensions(std::span<char const* const> extensions) const;
-	bool SupportsQueues(std::span<QueueInfo const> queues) const;
+	bool SupportsQueue(QueueInfo const& queue_info) const;
+	bool SupportsQueues(std::span<QueueInfo const> queue_infos) const;
 	bool SupportsSurface(u32 queue_family_index, vk::SurfaceKHR const surface) const;
-	bool IsSuitable(PhysicalDeviceSelectInfo const& info = {}) const;
-	
+	bool Supports(PhysicalDeviceSupportInfo const& info = {}) const;
 
+	// Some feature support checks
+	bool SupportsDynamicRendering() const;
+	bool SupportsSynchronization2() const;
+	bool SupportsBufferDeviceAddress() const;
+	
 	// returns nullptr if not found
 	auto GetDedicatedTransferQueueFamily() const -> vk::QueueFamilyProperties const*;
 	auto GetDedicatedComputeQueueFamily() const -> vk::QueueFamilyProperties const*;
 	auto GetQueueCount(u32 queue_family_index) const -> u32;
+	auto GetMaxPushConstantsSize() const -> u32;
 
 	// Returns fitting queue family index or kQueueNotFound
 	auto FindQueueFamilyIndex(QueueInfo const& info, vk::QueueFlags undesired_flags = {})
@@ -75,10 +84,10 @@ public:
 	// base_features.LinkNextStructure(reinterpret_cast<vk::BaseOutStructure*>(&atomic_features));
 
 	// Features
-	FeatureChain base_features{true};
+	FeatureChainBase base_features;
 
 	// Properties
-	PropertiesChain base_properties;
+	PropertiesChainBase base_properties;
 
 	// Memory properties
 	vk::PhysicalDeviceMemoryProperties2 memory_properties;
@@ -91,6 +100,8 @@ public:
 
 	// Max supported samples, updated with GetDetails();
 	vk::SampleCountFlagBits max_samples = vk::SampleCountFlagBits::e1;
+private:
+  bool IsQueueFamilySuitable(u32 queue_family_index, QueueInfo const& queue) const;
 };
 } // namespace VB_NAMESPACE
 

@@ -20,7 +20,7 @@ import vulkan_hpp;
 
 VB_EXPORT
 namespace VB_NAMESPACE {
-struct PhysicalDeviceSelectInfo {
+struct PhysicalDeviceSupportInfo {
 	// Required user extensions for the physical device
 	std::span<char const* const> extensions = {};
 	// Span of required queues, defaulting to one queue with graphics capability

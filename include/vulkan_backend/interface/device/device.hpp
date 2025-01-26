@@ -36,7 +36,7 @@ namespace VB_NAMESPACE {
 // Owned by InstanceResource, owns other resources
 class Device : public vk::Device, NoCopyNoMove, public Named, public ResourceBase<Instance> {
   public:
-	Device(Instance* const instance, PhysicalDevice* physical_device, DeviceInfo const& info);
+	Device(Instance& instance, PhysicalDevice& physical_device, DeviceInfo const& info);
 	~Device();
 	// Graphics pipeline library functions (VK_EXT_graphics_pipeline_library)
 	auto CreateVertexInputInterface(VertexInputInfo const& info) -> vk::Pipeline;
@@ -46,8 +46,7 @@ class Device : public vk::Device, NoCopyNoMove, public Named, public ResourceBas
 	auto LinkPipeline(std::array<vk::Pipeline, 4> const& pipelines, vk::PipelineLayout layout,
 					  bool link_time_optimization) -> vk::Pipeline;
 
-	// These resources are stored in hashmap
-	// Freed automatically
+	// These resources are stored in hashmap and freed automatically
 	[[nodiscard]] auto GetOrCreatePipelineLayout(PipelineLayoutInfo const& info) -> vk::PipelineLayout;
 	[[nodiscard]] auto GetOrCreateSampler(vk::SamplerCreateInfo const& info = defaults::linearSampler)
 		-> vk::Sampler;
@@ -59,7 +58,7 @@ class Device : public vk::Device, NoCopyNoMove, public Named, public ResourceBas
 	auto GetMaxSamples() -> vk::SampleCountFlagBits;
 	
 	// Get queue what fits the given queue info or nullptr if not found
-	auto GetQueue(vk::QueueFlags flags, vk::SurfaceKHR supported_surface = nullptr) -> Queue const*;
+	auto GetQueue(QueueInfo const& info) -> Queue const*;
 	
 	// Get all created queues
 	auto GetQueues() -> std::span<Queue const>;
@@ -88,8 +87,8 @@ class Device : public vk::Device, NoCopyNoMove, public Named, public ResourceBas
 	auto CreatePipelineLayout(PipelineLayoutInfo const& info) -> vk::PipelineLayout;
 	// void CreateBindlessDescriptor(DescriptorInfo const& info = defaults::kBindlessDescriptorInfo);
 
-	vk::PipelineCache  pipeline_cache			= nullptr;
-	PhysicalDevice* physical_device				= nullptr;
+	vk::PipelineCache pipeline_cache  = nullptr;
+	PhysicalDevice*	  physical_device = nullptr;
 
 	// must be set before creating buffers or images
 	// BindlessDescriptor descriptor;

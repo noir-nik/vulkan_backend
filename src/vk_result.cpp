@@ -20,7 +20,7 @@ void CheckVkResultDefault(vk::Result result, char const* message) {
 	if (result == vk::Result::eSuccess) [[likely]] {
 		return;
 	}
-	fprintf(stderr, "[VULKAN ERROR: %s] %s\n", StringFromVkResult(result), message);
+	fprintf(stderr, "[ VULKAN ERROR: %s ] %s\n", StringFromVkResult(result), message);
 	if (int(result) < 0) {
 		std::abort();
 	}

@@ -34,6 +34,12 @@ struct Source  {
 	bool operator==(Source const& other) const { return data == other.data && type == other.type; }
 };
 
+template<typename T>
+struct SpecializationInfo {
+	std::span<vk::SpecializationMapEntry const> entries;
+	T& data;
+};
+
 struct PipelineStage {
 	enum class Flags {
 		kNone = 0,
@@ -71,6 +77,7 @@ struct PipelineStage {
 
 	// Specialization constants
 	vk::SpecializationInfo specialization_info = {};
+	// SpecializationInfo specialization_info;
 
 	bool operator==(PipelineStage const& other) const {
 		return stage == other.stage && source == other.source &&

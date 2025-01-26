@@ -182,7 +182,7 @@ void Image::Create(ImageInfo const& info) {
 	} else {
 		if (info.usage & vk::ImageUsageFlagBits::eSampled ||
 			info.usage & vk::ImageUsageFlagBits::eStorage) {
-			VB_LOG_WARN("Gpu image created without descriptor!");
+			VB_LOG_WARN("Gpu image created without descriptor write");
 		}
 	}
 
@@ -193,21 +193,11 @@ void Image::Create(ImageInfo const& info) {
 }
 
 void Image::SetDebugUtilsName(char const* name) {
-	VB_VK_RESULT result = owner->setDebugUtilsObjectNameEXT({
-		.objectType	  = vk::ObjectType::eImage,
-		.objectHandle = reinterpret_cast<uint64_t>((static_cast<VkImage>(*this))),
-		.pObjectName  = name,
-	});
-	VB_CHECK_VK_RESULT(result, "Failed to set image debug utils object name!");
+	owner->SetDebugUtilsName(vk::ObjectType::eImage, static_cast<vk::Image*>(this), name);
 }
 
 void Image::SetDebugUtilsViewName(char const* name) {
-	VB_VK_RESULT result = owner->setDebugUtilsObjectNameEXT({
-		.objectType	  = vk::ObjectType::eImageView,
-		.objectHandle = reinterpret_cast<uint64_t>(static_cast<VkImageView>(view)),
-		.pObjectName  = name,
-	});
-	VB_CHECK_VK_RESULT(result, "Failed to set image view debug utils object name!");
+	owner->SetDebugUtilsName(vk::ObjectType::eImageView, &view, name);
 }
 
 void Image::Free() {

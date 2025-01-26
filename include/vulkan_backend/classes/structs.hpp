@@ -18,13 +18,10 @@ import vulkan_hpp;
 
 VB_EXPORT
 namespace VB_NAMESPACE {
-enum class Memory {
-	GPU = vk::MemoryPropertyFlags::MaskType(vk::MemoryPropertyFlagBits::eDeviceLocal),
-	CPU = vk::MemoryPropertyFlags::MaskType(vk::MemoryPropertyFlagBits::eHostVisible)
-		| vk::MemoryPropertyFlags::MaskType(vk::MemoryPropertyFlagBits::eHostCoherent),
-};
-
-using MemoryFlags = vk::Flags<Memory>;
+namespace Memory {
+vk::MemoryPropertyFlags constexpr inline eGPU = vk::MemoryPropertyFlagBits::eDeviceLocal;
+vk::MemoryPropertyFlags constexpr inline eCPU = vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent;
+}
 
 struct Viewport {
     float    x;

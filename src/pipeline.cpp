@@ -59,7 +59,7 @@ void Pipeline::Create(PipelineInfo const& info) {
 	VB_ASSERT(info.stages.size() == 1, "Compute pipeline supports only 1 stage.");
 	vk::ShaderModule shader_modules[1];
 	vk::PipelineShaderStageCreateInfo shader_stages[1];
-	CreateShaderStages(owner, info.stages, shader_modules, shader_stages);
+	CreateShaderModulesAndStagesInfos(owner, info.stages, shader_modules, shader_stages);
 
 	vk::ComputePipelineCreateInfo pipelineInfo{
 		.stage				= shader_stages[0],
@@ -82,7 +82,7 @@ void Pipeline::Create(GraphicsPipelineInfo const& info) {
 	VB_ASSERT(info.stages.size() == 1, "Compute pipeline supports only 1 stage.");
 	VB_VLA(vk::ShaderModule, shader_modules, info.stages.size());
 	VB_VLA(vk::PipelineShaderStageCreateInfo, shader_stages, info.stages.size());
-	CreateShaderStages(owner, info.stages, shader_modules.data(), shader_stages.data());
+	CreateShaderModulesAndStagesInfos(owner, info.stages, shader_modules.data(), shader_stages.data());
 
 	VB_VLA(vk::VertexInputAttributeDescription, attribute_descs, info.vertex_attributes.size());
 	u32 attribute_size = 0;

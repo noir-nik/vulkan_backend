@@ -11,6 +11,7 @@ import std;
 import vulkan_hpp;
 #endif
 
+#include "vulkan_backend/util/structure_chain.hpp"
 #include "vulkan_backend/config.hpp"
 
 VB_EXPORT
@@ -32,19 +33,21 @@ constexpr void EnableRequiredFeatures(vk::PhysicalDeviceVulkan13Features& featur
 	features.dynamicRendering = true;
 }
 
-struct FeatureChain {
-	constexpr FeatureChain(bool enable_required = true) {
+struct FeatureChainBase {
+	constexpr FeatureChainBase() {
 		features2.pNext = &vulkan11;
 		vulkan11.pNext = &vulkan12;
 		vulkan12.pNext = &vulkan13;
-		if (enable_required) {
-			EnableRequiredFeatures(vulkan12);
-			EnableRequiredFeatures(vulkan13);
-		}
+		// if (enable_required) {
+		// 	EnableRequiredFeatures(vulkan12);
+		// 	EnableRequiredFeatures(vulkan13);
+		// }
 	};
 
-	void LinkNextStructure(vk::BaseOutStructure* const next) {
-		vulkan13.pNext = next;
+	// Pointer is assumed to be valid
+	void LinkNextStructure(void* const next) {
+		InsertStructureAfter(reinterpret_cast<vk::BaseOutStructure*>(&features2),
+							 reinterpret_cast<vk::BaseOutStructure*>(next));
 	};
 
 	vk::PhysicalDeviceFeatures2		   features2;
@@ -53,11 +56,11 @@ struct FeatureChain {
 	vk::PhysicalDeviceVulkan13Features vulkan13;
 };
 
-FeatureChain inline kRequiredFeatures{true};
+// FeatureChainBase inline kRequiredFeatures{true};
 
-struct PropertiesChain {
+struct PropertiesChainBase {
 	// Setup structure chain in constructor
-	constexpr PropertiesChain() {
+	constexpr PropertiesChainBase() {
 		properties2.pNext = &vulkan11;
 		vulkan11.pNext = &vulkan12;
 		vulkan12.pNext = &vulkan13;

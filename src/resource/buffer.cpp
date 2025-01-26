@@ -62,7 +62,7 @@ Buffer::~Buffer() { Free(); }
 auto Buffer::GetSize() const -> u64 { return info.size; }
 
 auto Buffer::GetMappedData() const -> void* {
-	VB_ASSERT(info.memory & Memory::CPU, "Buffer not cpu accessible!");
+	VB_ASSERT(info.memory & Memory::eCPU, "Buffer not cpu accessible!");
 	return allocation_info.pMappedData;
 }
 
@@ -71,14 +71,14 @@ auto Buffer::GetAddress() const -> vk::DeviceAddress {
 }
 
 auto Buffer::Map() -> void* {
-	VB_ASSERT(info.memory & Memory::CPU, "Buffer not cpu accessible!");
+	VB_ASSERT(info.memory & Memory::eCPU, "Buffer not cpu accessible!");
 	void* data;
 	vmaMapMemory(owner->vma_allocator, allocation, &data);
 	return data;
 }
 
 void Buffer::Unmap() {
-	VB_ASSERT(info.memory & Memory::CPU, "Buffer not cpu accessible!");
+	VB_ASSERT(info.memory & Memory::eCPU, "Buffer not cpu accessible!");
 	vmaUnmapMemory(owner->vma_allocator, allocation);
 }
 
@@ -123,7 +123,7 @@ void Buffer::Create(Device& device, BufferInfo const& info) {
 	};
 
 	VmaAllocationCreateInfo allocInfo = {
-		.flags = info.memory & Memory::CPU ? kBufferCpuFlags : 0,
+		.flags = info.memory & Memory::eCPU ? kBufferCpuFlags : 0,
 		.usage = VMA_MEMORY_USAGE_AUTO,
 	};
 
@@ -135,7 +135,7 @@ void Buffer::Create(Device& device, BufferInfo const& info) {
 
 	// Update bindless descriptor
 	if (info.descriptor != nullptr) {
-		VB_ASSERT(info.memory == Memory::GPU,
+		VB_ASSERT(info.memory == Memory::eGPU,
 				  "Cannot write descriptor for buffer with cpu accessible memory");
 		SetResourceID(info.descriptor->PopID(info.binding));
 
@@ -157,7 +157,7 @@ void Buffer::Create(Device& device, BufferInfo const& info) {
 		owner->updateDescriptorSets(1, &write, 0, nullptr);
 	} else {
 		if (usage & vk::BufferUsageFlagBits::eStorageBuffer) {
-			VB_LOG_WARN("Storage buffer created without descriptor");
+			VB_LOG_WARN("Storage buffer created without descriptor write");
 		}
 	}
 }
@@ -171,7 +171,7 @@ void Buffer::Free() {
 }
 
 StagingBuffer::StagingBuffer(Device&  device, u32 size, std::string_view name)
-	: Buffer(device, {size, vk::BufferUsageFlagBits::eTransferSrc, Memory::CPU, name}) {
+	: Buffer(device, {size, vk::BufferUsageFlagBits::eTransferSrc, Memory::eCPU, name}) {
 	offset = 0;
 }
 

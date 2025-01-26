@@ -13,16 +13,14 @@ import std;
 import vulkan_hpp;
 #endif
 
+#include "vulkan_backend/util/structure_chain.hpp"
 #include "vulkan_backend/interface/physical_device/physical_device.hpp"
-#include "vulkan_backend/functions.hpp"
-#include "vulkan_backend/vk_result.hpp"
-#include "vulkan_backend/util/algorithm.hpp"
-#include "vulkan_backend/util/enumerate.hpp"
-#include "vulkan_backend/macros.hpp"
-#include "vulkan_backend/util/bits.hpp"
 #include "vulkan_backend/log.hpp"
-
-
+#include "vulkan_backend/macros.hpp"
+#include "vulkan_backend/util/algorithm.hpp"
+#include "vulkan_backend/util/bits.hpp"
+#include "vulkan_backend/util/enumerate.hpp"
+#include "vulkan_backend/vk_result.hpp"
 
 namespace VB_NAMESPACE {
 void PhysicalDevice::GetDetails() {
@@ -81,17 +79,42 @@ auto PhysicalDevice::SupportsSurface(u32 queue_family_index, vk::SurfaceKHR cons
 		return supported;
 }
 
-auto PhysicalDevice::SupportsQueues(std::span<QueueInfo const> queues) const -> bool {
+bool PhysicalDevice::SupportsDynamicRendering() const {
+	return base_features.vulkan13.dynamicRendering == vk::True;
+}
+
+bool PhysicalDevice::SupportsSynchronization2() const {
+	return base_features.vulkan13.synchronization2 == vk::True;
+}
+
+bool PhysicalDevice::SupportsBufferDeviceAddress() const {
+	return base_features.vulkan12.bufferDeviceAddress == vk::True;
+}
+
+bool PhysicalDevice::IsQueueFamilySuitable(u32 queue_family_index, QueueInfo const& queue) const {
+	auto const& family_property = queue_family_properties[queue_family_index].queueFamilyProperties;
+	bool has_desired_flags = TestBits(family_property.queueFlags, queue.flags);
+	bool has_undesired_flags = (family_property.queueFlags & queue.undesired_flags) != vk::QueueFlags{};
+	bool supports_surface = queue.supported_surface == vk::SurfaceKHR{} || SupportsSurface(queue_family_index, queue.supported_surface);
+	return has_desired_flags && !has_undesired_flags && supports_surface;
+}
+
+bool PhysicalDevice::SupportsQueue(QueueInfo const& queue_info) const {
+	for (auto [i, family_property2] : util::enumerate(queue_family_properties)) {
+		if (IsQueueFamilySuitable(i, queue_info)) {
+			return true;
+		}
+	};
+	return false;
+}
+
+bool PhysicalDevice::SupportsQueues(std::span<QueueInfo const> queue_infos) const {
 	VB_VLA(u32, num_taken_queues, queue_family_properties.size());
 	std::fill(num_taken_queues.begin(), num_taken_queues.end(), 0);
-	return std::all_of(queues.begin(), queues.end(), [this, &num_taken_queues](auto const& queue) {
+	return std::all_of(queue_infos.begin(), queue_infos.end(), [this, &num_taken_queues](vb::QueueInfo const& queue) {
 		for (auto [i, family_property] : util::enumerate(queue_family_properties)) {
 			bool has_available_queues = num_taken_queues[i] < family_property.queueFamilyProperties.queueCount;
-			bool has_desired_flags = TestBits(family_property.queueFamilyProperties.queueFlags, queue.flags);
-			bool has_undesired_flags = (family_property.queueFamilyProperties.queueFlags & queue.undesired_flags) != vk::QueueFlags{};
-			bool supports_surface = queue.supported_surface == vk::SurfaceKHR{} || SupportsSurface(i, queue.supported_surface);
-
-			if (has_available_queues && has_desired_flags && !has_undesired_flags && supports_surface) {
+			if (has_available_queues && IsQueueFamilySuitable(i, queue)) {
 				++num_taken_queues[i];
 				VB_LOG_TRACE("Using queue family %u", i);
 				return true;
@@ -103,8 +126,8 @@ auto PhysicalDevice::SupportsQueues(std::span<QueueInfo const> queues) const -> 
 	});
 }
 
-auto PhysicalDevice::IsSuitable(PhysicalDeviceSelectInfo const& info) const -> bool {
-	return SupportsExtensions(info.extensions) && SupportsRequiredFeatures() && SupportsQueues(info.queues);
+auto PhysicalDevice::Supports(PhysicalDeviceSupportInfo const& info) const -> bool {
+	return SupportsExtensions(info.extensions) && SupportsQueues(info.queues);
 }
 
 auto PhysicalDevice::GetDedicatedTransferQueueFamily() const -> vk::QueueFamilyProperties const* {
@@ -131,6 +154,11 @@ auto PhysicalDevice::GetDedicatedComputeQueueFamily() const -> vk::QueueFamilyPr
 auto PhysicalDevice::GetQueueCount(u32 queue_family_index) const -> u32 {
 	return queue_family_properties[queue_family_index].queueFamilyProperties.queueCount;
 }
+
+auto PhysicalDevice::GetMaxPushConstantsSize() const -> u32 {
+	return GetProperties2().properties.limits.maxPushConstantsSize;
+}
+
 
 auto PhysicalDevice::SupportsRequiredFeatures() const -> bool {
 	if (// descriptor indexing

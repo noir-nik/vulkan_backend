@@ -17,8 +17,10 @@ import std;
 import vulkan_backend;
 #endif
 
+// Define queue info to select a compute queue
+vb::QueueInfo constexpr queue_info = {.flags = vk::QueueFlagBits::eCompute};
+
 int main(){
-	using vb::u32;
 	// Define constants for compute shader vector addition
 	int constexpr kVectorSize = 64 * 1024;	
 	int constexpr kWorkgroupSize = 16;
@@ -32,24 +34,48 @@ int main(){
 		.optional_layers = {{vb::kValidationLayerName}}
 	});
 
-	vb::PhysicalDevice* physical_device =
-		instance.SelectPhysicalDevice({.queues = {{{.flags = vk::QueueFlagBits::eCompute}}}});
-	if (physical_device == nullptr) {
+	// Select physical devices
+	int selected_device_index = instance.GetPhysicalDevices().size();
+	std::vector<vb::PhysicalDevice> physical_devices;
+	physical_devices.reserve(instance.GetPhysicalDevices().size());
+	for (auto& vk_device : instance.GetPhysicalDevices()) {
+		physical_devices.emplace_back(vk_device);
+		auto& current_device = physical_devices.back();
+		// Get all data from Vulkan API (features, properties, available
+		// extensions, memory properties, queue families)
+		current_device.GetDetails();
+		bool supports_features = current_device.SupportsSynchronization2() &&
+								 current_device.base_features.vulkan12.runtimeDescriptorArray == vk::True;
+		if (current_device.SupportsQueue(queue_info)) {
+			selected_device_index = physical_devices.size() - 1;
+			break;
+		}
+	}
+	// Return if no suitable device found
+	if (selected_device_index == instance.GetPhysicalDevices().size()) {
+		std::printf("No physical device with compute queue support found\n");
 		return 1;
 	}
+	vb::PhysicalDevice& physical_device = physical_devices[selected_device_index];
 
-	// Create device with 1 compute queue
-	u32 compute_queue_family_index =
-		physical_device->FindQueueFamilyIndex({.flags = vk::QueueFlagBits::eCompute});
-	vb::Device device(&instance, physical_device,
-					  {.queues = {{{.queueFamilyIndex = compute_queue_family_index, .queueCount = 1}}}});
+	// Create device with 1 compute queue and synchronization2
+	vk::PhysicalDeviceFeatures2 features2{};
+	vk::PhysicalDeviceVulkan12Features vulkan12_features{.runtimeDescriptorArray = vk::True}; // bindless descriptors
+	vk::PhysicalDeviceVulkan13Features vulkan13_features{.synchronization2 = vk::True}; // cmd.Barrier()
+	void* feature_chain[] = {&features2, &vulkan12_features, &vulkan13_features};
+	vb::SetupStructureChain(feature_chain);
+
+	vb::Device device(instance, physical_device,
+					  {.queues	  = {{{.queueFamilyIndex = physical_device.FindQueueFamilyIndex(queue_info),
+									   .queueCount		 = 1}}},
+					   .features2 = &features2});
 
 	// Create staging buffer for 2 vectors
 	vb::StagingBuffer staging_buffer(device, kVectorSize * sizeof(int) * 2);
 	vb::BindlessDescriptor bindless_descriptor(
 		device, {.bindings = {{{.binding		 = kBindingBuffer,
 								.descriptorType	 = vk::DescriptorType::eStorageBuffer,
-								.descriptorCount = 3,
+								.descriptorCount = kNumGpuBuffers,
 								.stageFlags		 = vk::ShaderStageFlagBits::eCompute}}}});
 
 	vk::PipelineLayout bindless_pipeline_layout = device.GetOrCreatePipelineLayout({
@@ -57,12 +83,12 @@ int main(){
 		.push_constant_ranges	= {{{
 			  .stageFlags = vk::ShaderStageFlagBits::eAll,
 			  .offset	  = 0,
-			  .size		  = physical_device->GetProperties2().properties.limits.maxPushConstantsSize,
+			  .size		  = physical_device.GetMaxPushConstantsSize(),
 		  }}},
 	});
 
 	// Get compute queue handle object
-	vb::Queue const& queue = *device.GetQueue({vk::QueueFlagBits::eCompute});
+	vb::Queue const& queue = *device.GetQueue(queue_info);
 	
 	// Create 2 vectors:
 	// vector_a = {0, 1, 2, ..., kVectorSize - 1}
@@ -74,11 +100,11 @@ int main(){
 
 	// Create device buffers
 	vb::BufferInfo buffer_info = {
-		.size = kVectorSize * sizeof(int),
-		.usage = vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferDst,
-		.memory = vb::Memory::GPU,
+		.size		= kVectorSize * sizeof(int),
+		.usage		= vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferDst,
+		.memory		= vb::Memory::eGPU,
 		.descriptor = &bindless_descriptor,
-		.binding = kBindingBuffer,
+		.binding	= kBindingBuffer,
 	};
 
 	// Create Buffer for vector_a and vector_b
@@ -92,9 +118,9 @@ int main(){
 	// Create Buffer for transfering result to CPU,
 	// we could also use staging for this
 	vb::Buffer cpu_buffer_result(device, {
-		.size = kVectorSize * sizeof(int),
-		.usage = vk::BufferUsageFlagBits::eTransferDst,
-		.memory = vb::Memory::CPU,
+		.size   = kVectorSize * sizeof(int),
+		.usage  = vk::BufferUsageFlagBits::eTransferDst,
+		.memory = vb::Memory::eCPU,
 	});
 
 	// Provide compile options for compute shader

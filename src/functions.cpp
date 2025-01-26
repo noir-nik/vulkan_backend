@@ -9,29 +9,33 @@ import std;
 import vulkan_hpp;
 #endif
 
-#include "vulkan_backend/functions.hpp"
+#include "vulkan_backend/util/structure_chain.hpp"
 #include "vulkan_backend/interface/instance/instance.hpp"
 
 namespace VB_NAMESPACE {
-auto SetupStructureChain(std::span<vk::BaseOutStructure* const> structures) -> vk::BaseOutStructure& {
+auto SetupStructureChain(std::span<void* const> structures) -> vk::BaseOutStructure* {
 	if (structures.size() > 1) [[likely]] {
 		for (std::size_t i = 0; i < structures.size() - 1; ++i) {
-			structures[i]->pNext = structures[i + 1];
+			auto iter = reinterpret_cast<vk::BaseOutStructure*>(structures[i]);
+			auto next = reinterpret_cast<vk::BaseOutStructure*>(structures[i + 1]);
+			iter->pNext = next;
 		}
 	}
-	return *structures.front();
+	return reinterpret_cast<vk::BaseOutStructure*>(structures.front());
 }
 
-void AppendStructureChain(vk::BaseOutStructure* const base_structure, vk::BaseOutStructure* const structure_to_append) {
-	vk::BaseOutStructure* iter = base_structure;
+void AppendStructureChain(void* const base_structure, void* const structure_to_append) {
+	vk::BaseOutStructure* iter = reinterpret_cast<vk::BaseOutStructure*>(base_structure);
 	while (iter->pNext != nullptr) {
 		iter = iter->pNext;
 	}
-	iter->pNext = structure_to_append;
+	iter->pNext = reinterpret_cast<vk::BaseOutStructure*>(structure_to_append);
 }
 
-void InsertStructureAfter(vk::BaseOutStructure* const base_structure, vk::BaseOutStructure* const structure_to_insert) {
-	structure_to_insert->pNext = base_structure->pNext;
-	base_structure->pNext = structure_to_insert;
+void InsertStructureAfter(void* const base_structure, void* const structure_to_insert) {
+	auto base = reinterpret_cast<vk::BaseOutStructure*>(base_structure);
+	auto insert = reinterpret_cast<vk::BaseOutStructure*>(structure_to_insert);
+	insert->pNext = base->pNext;
+	base->pNext = insert;
 }
 } // namespace VB_NAMESPACE

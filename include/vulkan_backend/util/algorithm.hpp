@@ -36,7 +36,7 @@ inline bool SupportsExtensions(std::span<vk::ExtensionProperties const> availabl
 		});
 }
 
-inline bool SpanContains(std::span<char const* const> span, std::string_view value) {
+inline bool SpanContainsString(std::span<char const* const> span, std::string_view value) {
 	return std::find(span.begin(), span.end(), value) != span.end();
 }
 

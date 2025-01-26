@@ -2,7 +2,7 @@
 
 #include "classes/structs.hpp"
 #include "config.hpp"
-#include "functions.hpp"
+#include "util/structure_chain.hpp"
 #include "fwd.hpp"
 #include "interface/buffer/buffer.hpp"
 #include "interface/command/command.hpp"
@@ -15,5 +15,8 @@
 #include "interface/queue/queue.hpp"
 #include "interface/swapchain/swapchain.hpp"
 #include "log.hpp"
+#include "vulkan_backend/vk_result.hpp"
+#include "vulkan_backend/vulkan_functions.hpp"
+#include "vulkan_backend/util/enumerate.hpp"
 
 #include "constants/constants.hpp"

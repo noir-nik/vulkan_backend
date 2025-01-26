@@ -18,11 +18,14 @@ import vulkan_hpp;
 #include "vulkan_backend/vk_result.hpp"
 
 namespace VB_NAMESPACE {
-void CreateShaderStages(Device const* device, std::span<const PipelineStage> stages,
+void CreateShaderModulesAndStagesInfos(Device const* device, std::span<const PipelineStage> stages,
 						vk::ShaderModule*				   p_shader_modules,
 						vk::PipelineShaderStageCreateInfo* p_shader_stages) {
 	for (auto [i, stage] : util::enumerate(stages)) {
+		// Load or compile shader
 		std::vector<char>		   bytes = LoadShader(stage);
+		
+		// Create shader module
 		vk::ShaderModuleCreateInfo createInfo{
 			.codeSize = bytes.size(),
 			.pCode	  = reinterpret_cast<const u32*>(bytes.data()),
@@ -30,6 +33,8 @@ void CreateShaderStages(Device const* device, std::span<const PipelineStage> sta
 		VB_VK_RESULT result =
 			device->createShaderModule(&createInfo, device->GetAllocator(), &p_shader_modules[i]);
 		VB_CHECK_VK_RESULT(result, "Failed to create shader module!");
+		
+		// Create shader stage info
 		p_shader_stages[i] = vk::PipelineShaderStageCreateInfo{
 			.stage				 = stage.stage,
 			.module				 = p_shader_modules[i],
@@ -43,18 +48,21 @@ void CreateShaderModuleInfos(std::span<const PipelineStage> stages, std::vector<
 							 vk::ShaderModuleCreateInfo*		p_shader_module_create_infos,
 							 vk::PipelineShaderStageCreateInfo* p_shader_stages) {
 	for (auto [i, stage] : util::enumerate(stages)) {
-		p_bytes[i]						= LoadShader(stage);
+		// Load or compile shader
+		p_bytes[i] = LoadShader(stage);
 
+		// Create shader module info
 		p_shader_module_create_infos[i] = vk::ShaderModuleCreateInfo{
 			.codeSize = p_bytes[i].size(),
 			.pCode	  = reinterpret_cast<const u32*>(p_bytes[i].data()),
 		};
-
+		
+		// Create shader stage info
 		p_shader_stages[i] = vk::PipelineShaderStageCreateInfo{
 			.pNext				 = &p_shader_module_create_infos[i],
 			.stage				 = stage.stage,
 			.pName				 = stage.entry_point.data(),
-			.pSpecializationInfo = nullptr,
+			.pSpecializationInfo = &stage.specialization_info,
 		};
 	}
 }

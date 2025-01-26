@@ -22,22 +22,7 @@ import vulkan_hpp;
 #include "vulkan_backend/log.hpp"
 #include "vulkan_backend/macros.hpp"
 #include "vulkan_backend/util/algorithm.hpp"
-
-PFN_vkCreateDebugUtilsMessengerEXT  pfnVkCreateDebugUtilsMessengerEXT;
-PFN_vkDestroyDebugUtilsMessengerEXT pfnVkDestroyDebugUtilsMessengerEXT;
-
-VKAPI_ATTR VkResult VKAPI_CALL vkCreateDebugUtilsMessengerEXT(VkInstance								instance,
-															  const VkDebugUtilsMessengerCreateInfoEXT* pCreateInfo,
-															  const VkAllocationCallbacks*				pAllocator,
-															  VkDebugUtilsMessengerEXT*					pMessenger) {
-	return pfnVkCreateDebugUtilsMessengerEXT(instance, pCreateInfo, pAllocator, pMessenger);
-}
-
-VKAPI_ATTR void VKAPI_CALL vkDestroyDebugUtilsMessengerEXT(VkInstance instance,
-														   VkDebugUtilsMessengerEXT messenger,
-														   VkAllocationCallbacks const* pAllocator) {
-	return pfnVkDestroyDebugUtilsMessengerEXT(instance, messenger, pAllocator);
-}
+#include "vulkan_backend/vulkan_functions.hpp"
 
 namespace VB_NAMESPACE {
 vk::Bool32 DebugUtilsCallback(
@@ -89,10 +74,7 @@ void Instance::LogCreationError(vk::Result result) {
 
 auto Instance::Create(InstanceCreateInfo const& info) -> vk::Result {
 	application_info = info.application_info;
-	if (info.allocator) {
-		allocator_object = *info.allocator;
-		allocator = &allocator_object;
-	}
+	SetAllocator(info.allocator);
 
 	// get api version
 	VB_VK_RESULT result = vk::enumerateInstanceVersion(&application_info.apiVersion);
@@ -134,7 +116,7 @@ auto Instance::Create(InstanceCreateInfo const& info) -> vk::Result {
 		std::back_inserter(enabled_layers), SupportsLayer);
 	
 	// Check if validation layer is enabled
-	if (algo::SpanContains(enabled_layers, kValidationLayerName)) {
+	if (algo::SpanContainsString(enabled_layers, kValidationLayerName)) {
 		validation_enabled = true;
 	}
 
@@ -161,11 +143,11 @@ auto Instance::Create(InstanceCreateInfo const& info) -> vk::Result {
 		.pUserData		 = kDebugUtilsCreateInfo.pUserData,
 	};
 
-	bool requiresDebugUtils = algo::SpanContains(enabled_extensions, vk::EXTDebugUtilsExtensionName);
+	bool bDebugUtilsEnabled = algo::SpanContainsString(enabled_extensions, vk::EXTDebugUtilsExtensionName);
 
 	std::tie(result, static_cast<vk::Instance&>(*this)) = vk::createInstance(
 		{
-			.pNext = requiresDebugUtils ? &kDebugUtilsCreateInfo : nullptr,
+			.pNext = bDebugUtilsEnabled ? &kDebugUtilsCreateInfo : nullptr,
 			.pApplicationInfo = &info.application_info,
 			.enabledLayerCount = static_cast<u32>(enabled_layers.size()),
 			.ppEnabledLayerNames = enabled_layers.data(),
@@ -178,17 +160,16 @@ auto Instance::Create(InstanceCreateInfo const& info) -> vk::Result {
 	VB_LOG_TRACE("Created instance.");
 
 	// Debug Utils
-	if (requiresDebugUtils) {
-		// Only with dynaic loader
-		pfnVkCreateDebugUtilsMessengerEXT =
-			reinterpret_cast<PFN_vkCreateDebugUtilsMessengerEXT>(getProcAddr("vkCreateDebugUtilsMessengerEXT"));
+	if (bDebugUtilsEnabled) {
+		// Only with dynamic loader
+		LoadInstanceDebugUtilsFunctionsEXT(*this);
 		std::tie(result, debug_messenger) = createDebugUtilsMessengerEXT(kDebugUtilsCreateInfo, allocator);
 		VB_CHECK_VK_RESULT(result, "Failed to set up debug messenger!");
 		VB_LOG_TRACE("Created debug messenger.");
 	}
 
 	// Layer settings
-	bool requiresLayerSettings = algo::SpanContains(enabled_layers, vk::EXTLayerSettingsExtensionName);
+	bool requiresLayerSettings = algo::SpanContainsString(enabled_layers, vk::EXTLayerSettingsExtensionName);
 	// todo: add layer settings extension
 	
 	// Get physical devices
@@ -199,25 +180,16 @@ auto Instance::Create(InstanceCreateInfo const& info) -> vk::Result {
 void Instance::CreatePhysicalDevices() {
 	// VB_VLA(vk::PhysicalDevice, vk_devices, physical_devices.size());
 	// std::vector<vk::PhysicalDevice> physical_devices_vk;
-	auto[result, physical_devices_vk] = enumeratePhysicalDevices();
+	VB_VK_RESULT result;
+	std::tie(result, physical_devices) = enumeratePhysicalDevices();
 	VB_CHECK_VK_RESULT(result, "Failed to enumerate physical devices!");
-	VB_ASSERT(!physical_devices_vk.empty(), "no GPUs with Vulkan support!");
-	VB_LOG_TRACE("Found %d physical device(s).", physical_devices_vk.size());
-	physical_devices.reserve(physical_devices_vk.size());
-	for (auto& device_vk : physical_devices_vk) {
-		physical_devices.emplace_back(device_vk);
-		physical_devices.back().GetDetails();
-	};
-}
-
-auto Instance::SelectPhysicalDevice(PhysicalDeviceSelectInfo const& info) -> PhysicalDevice* {
-	VB_ASSERT(physical_devices.size() > 0, "At least one physical device must be available!");
-	for (PhysicalDevice& device : physical_devices) {
-		if (device.IsSuitable(info)) {
-			return &device;
-		}
-	}
-	return nullptr;
+	VB_ASSERT(!physical_devices.empty(), "no GPUs with Vulkan support!");
+	VB_LOG_TRACE("Found %d physical device(s).", physical_devices.size());
+	// physical_devices.reserve(physical_devices_vk.size());
+	// for (auto& device_vk : physical_devices_vk) {
+	// 	physical_devices.emplace_back(device_vk);
+	// 	physical_devices.back().GetDetails();
+	// };
 }
 
 auto Instance::GetName() const -> char const* {
@@ -226,6 +198,13 @@ auto Instance::GetName() const -> char const* {
 
 auto Instance::GetResourceTypeName() const -> char const* {
 	return "InstanceResource";
+}
+
+auto Instance::SetAllocator(vk::AllocationCallbacks* allocator) -> void {
+	this->allocator = allocator;
+	if (allocator) {
+		allocator_object = *allocator;
+	}
 }
 
 void Instance::Free() {

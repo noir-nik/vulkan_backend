@@ -26,22 +26,13 @@ import vk_mem_alloc;
 #include "vulkan_backend/log.hpp"
 #include "vulkan_backend/macros.hpp"
 #include "vulkan_backend/vk_result.hpp"
-
-
-PFN_vkSetDebugUtilsObjectNameEXT pfnVkSetDebugUtilsObjectNameEXT = nullptr;
-
-VKAPI_ATTR VkResult VKAPI_CALL vkSetDebugUtilsObjectNameEXT(VkDevice							 device,
-															const VkDebugUtilsObjectNameInfoEXT* pNameInfo) {
-	if (pfnVkSetDebugUtilsObjectNameEXT) {
-		return pfnVkSetDebugUtilsObjectNameEXT(device, pNameInfo);
-	}
-	return VK_SUCCESS;
-}
+#include "vulkan_backend/vulkan_functions.hpp"
 
 namespace VB_NAMESPACE {
 
-Device::Device(Instance* const instance, PhysicalDevice* physical_device, DeviceInfo const& info)
-	: ResourceBase(instance), physical_device(physical_device) {
+Device::Device(Instance& instance, PhysicalDevice& physical_device, DeviceInfo const& info)
+	: ResourceBase(&instance), physical_device(&physical_device) {
+	// VB_ASSERT(physical_device != nullptr, "Physical device must not be null to create device!");
 	Create(info);
 }
 
@@ -63,11 +54,12 @@ void Device::WaitIdle() {
 
 auto Device::GetMaxSamples() -> vk::SampleCountFlagBits { return physical_device->max_samples; }
 
-auto Device::GetQueue(vk::QueueFlags flags, vk::SurfaceKHR supported_surface) -> Queue const* {
+auto Device::GetQueue(QueueInfo const& info) -> Queue const* {
 	for (auto& q : queues) {
-		if ((q.flags & flags) == flags &&
-			(supported_surface == vk::SurfaceKHR{} ||
-			 physical_device->SupportsSurface(q.family, supported_surface))) {
+		if ((q.flags & info.flags) == info.flags &&
+			(q.flags & info.undesired_flags) == vk::QueueFlags{} &&
+			(info.supported_surface == vk::SurfaceKHR{} ||
+			 physical_device->SupportsSurface(q.family, info.supported_surface))) {
 			return &q;
 		}
 	}
@@ -109,7 +101,7 @@ void Device::Create(DeviceInfo const& info) {
 	}
 
 	vk::DeviceCreateInfo create_info{
-		.pNext					 = &info.feature_chain,
+		.pNext					 = info.features2,
 		.queueCreateInfoCount	 = static_cast<u32>(queue_create_infos.size()),
 		.pQueueCreateInfos		 = queue_create_infos.data(),
 		.enabledLayerCount		 = static_cast<u32>(GetInstance().enabled_layers.size()),
@@ -143,7 +135,7 @@ void Device::Create(DeviceInfo const& info) {
 	vulkanFunctions.vkGetDeviceProcAddr		   = &vkGetDeviceProcAddr;
 
 	VmaAllocatorCreateInfo allocatorCreateInfo = {
-		.flags = VMA_ALLOCATOR_CREATE_EXT_MEMORY_BUDGET_BIT | VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT,
+		.flags			  = VMA_ALLOCATOR_CREATE_EXT_MEMORY_BUDGET_BIT,
 		//| VMA_ALLOCATOR_CREATE_EXTERNALLY_SYNCHRONIZED_BIT,
 		.physicalDevice	  = *physical_device,
 		.device			  = *this,
@@ -152,12 +144,15 @@ void Device::Create(DeviceInfo const& info) {
 		.vulkanApiVersion = VK_API_VERSION_1_3,
 	};
 
+	if (algo::SpanContainsString(enabled_extensions, vk::KHRBufferDeviceAddressExtensionName)) {
+		allocatorCreateInfo.flags |= VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT;
+	}
+
 	result = vk::Result(vmaCreateAllocator(&allocatorCreateInfo, &vma_allocator));
 	VB_CHECK_VK_RESULT(result, "Failed to create VmaAllocator!");
 
 	if (owner->IsValidationEnabled()) {
-		pfnVkSetDebugUtilsObjectNameEXT = reinterpret_cast<PFN_vkSetDebugUtilsObjectNameEXT>(
-			vkGetDeviceProcAddr(VkDevice(this), "vkSetDebugUtilsObjectName"));
+		LoadDeviceDebugUtilsFunctionsEXT(*this);
 	}
 	// vkGetAccelerationStructureBuildSizesKHR = reinterpret_cast<PFN_vkGetAccelerationStructureBuildSizesKHR>
 	// 	(vkGetDeviceProcAddr(VkDevice(this), "vkGetAccelerationStructureBuildSizesKHR"));
@@ -212,6 +207,7 @@ auto Device::GetOrCreateSampler(vk::SamplerCreateInfo const& info) -> vk::Sample
 }
 
 void Device::SetDebugUtilsName(vk::ObjectType objectType, void* handle, const char* name) {
+	if (!owner->IsValidationEnabled()) return;
 	VB_VK_RESULT result = setDebugUtilsObjectNameEXT({
 		.objectType   = objectType,
 		.objectHandle = reinterpret_cast<u64>(handle),

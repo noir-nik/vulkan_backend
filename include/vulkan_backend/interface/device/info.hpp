@@ -45,7 +45,7 @@ struct DeviceInfo {
 	// - SetupStructureChain()
 	// - AppendStructureChain()
 	// - InsertStructureAfter()
-	vk::PhysicalDeviceFeatures2 const& feature_chain = kRequiredFeatures.features2;
+	vk::PhysicalDeviceFeatures2* const features2 = nullptr;
 
 	// Give a name to device or use name of respective physical device
 	std::string_view name = "";
