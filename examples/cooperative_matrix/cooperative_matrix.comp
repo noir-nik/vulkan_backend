@@ -1,0 +1,72 @@
+#version 450 core
+#extension GL_KHR_memory_scope_semantics : enable
+#extension GL_KHR_cooperative_matrix : enable
+#extension GL_NV_cooperative_matrix2 : enable
+#extension GL_EXT_shader_explicit_arithmetic_types_float16 : enable
+#extension GL_EXT_shader_explicit_arithmetic_types_int8 : enable
+#extension GL_EXT_shader_explicit_arithmetic_types_int32 : enable
+#extension GL_EXT_buffer_reference : enable
+
+// #defines set on command line:
+// A_TYPE: type of A and B matrices
+// C_TYPE: type of C and Output matrices
+
+// Specialization constants
+layout(constant_id = 0) const uint M = 1;
+layout(constant_id = 1) const uint N = 1;
+layout(constant_id = 2) const uint K = 1;
+layout(constant_id = 3) const uint tileM = 1;
+layout(constant_id = 4) const uint tileN = 1;
+layout(constant_id = 5) const uint tileK = 1;
+layout(constant_id = 6) const uint kWorkGroupSize = 1;
+layout(constant_id = 7) const float alpha = 1.0;
+layout(constant_id = 8) const float beta = 1.0;
+
+// Types of matrix buffer pointers
+layout(buffer_reference) buffer ABuffer { A_TYPE data[]; };
+layout(buffer_reference) buffer CBuffer { C_TYPE data[]; };
+
+// Push constants with buffer addresses
+layout(push_constant) uniform Constants {
+	ABuffer inputA;
+	ABuffer inputB;
+	CBuffer inputC;
+	CBuffer outputD;
+} ctx;
+
+// We only need gl_WorkGroupID and indexing inside the workgroup doesn't matter
+layout(local_size_x_id = 6, local_size_y = 1, local_size_z = 1) in;
+
+void main() {
+	// compute position in grid
+	uvec2 tileID = uvec2(gl_WorkGroupID.xy);
+
+	// Initialize result to zero
+	coopmat<C_TYPE, gl_ScopeWorkgroup, tileM, tileN, gl_MatrixUseAccumulator> result;
+	result = coopmat<C_TYPE, gl_ScopeWorkgroup, tileM, tileN, gl_MatrixUseAccumulator>(C_TYPE(0));
+
+	tensorLayoutNV<2> tensorLayoutA = createTensorLayoutNV(2);
+	tensorLayoutNV<2> tensorLayoutB = createTensorLayoutNV(2);
+	tensorLayoutNV<2> tensorLayoutC = createTensorLayoutNV(2);
+
+	tensorLayoutA = setTensorLayoutDimensionNV(tensorLayoutA, M, K);
+	tensorLayoutB = setTensorLayoutDimensionNV(tensorLayoutB, K, N);
+	tensorLayoutC = setTensorLayoutDimensionNV(tensorLayoutC, M, N);
+
+	for (uint chunkK = 0; chunkK < K; chunkK += tileK) {
+
+		coopmat<A_TYPE, gl_ScopeWorkgroup, tileM, tileK, gl_MatrixUseA> matA;
+		coopMatLoadTensorNV(matA, ctx.inputA.data, 0, sliceTensorLayoutNV(tensorLayoutA, tileM * tileID.y, tileM, chunkK, tileK));
+
+		coopmat<A_TYPE, gl_ScopeWorkgroup, tileK, tileN, gl_MatrixUseB> matB;
+		coopMatLoadTensorNV(matB, ctx.inputB.data, 0, sliceTensorLayoutNV(tensorLayoutB, chunkK, tileK, tileN * tileID.x, tileN));
+
+		result = coopMatMulAdd(matA, matB, result);
+	}
+
+	coopmat<C_TYPE, gl_ScopeWorkgroup, tileM, tileN, gl_MatrixUseAccumulator> matC;
+	coopMatLoadTensorNV(matC, ctx.inputC.data, 0, sliceTensorLayoutNV(tensorLayoutC, tileM * tileID.y, tileM, tileN * tileID.x, tileN));
+
+	result = C_TYPE(alpha) * result + C_TYPE(beta) * matC;
+	coopMatStoreTensorNV(result, ctx.outputD.data, 0, sliceTensorLayoutNV(tensorLayoutC, tileM * tileID.y, tileM, tileN * tileID.x, tileN));
+}

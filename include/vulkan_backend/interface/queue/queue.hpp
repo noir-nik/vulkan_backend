@@ -26,6 +26,7 @@ class Queue : public vk::Queue {
   public:
 	void Submit(std::span<vk::CommandBufferSubmitInfo const> cmds, vk::Fence fence = nullptr,
 				SubmitInfo const& info = {}) const;
+	void Wait() const;
 	auto GetFamilyIndex() const -> u32;
 	auto GetIndex() const -> u32;
 	auto GetFlags() const -> vk::QueueFlags;

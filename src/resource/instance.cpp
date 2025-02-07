@@ -31,16 +31,16 @@ vk::Bool32 DebugUtilsCallback(
     const vk::DebugUtilsMessengerCallbackDataEXT*  pCallbackData,
     void*                                          pUserData ) {
 	if (messageSeverity & vk::DebugUtilsMessageSeverityFlagBitsEXT::eVerbose) {
-		VB_LOG_TRACE("[ Validation Layer ] %s", pCallbackData->pMessage);
+		VB_LOG_MESSAGE(LogLevel::Trace, pCallbackData->pMessage);
 	}
 	if (messageSeverity & vk::DebugUtilsMessageSeverityFlagBitsEXT::eInfo) {
-		VB_LOG_TRACE("[ Validation Layer ] %s", pCallbackData->pMessage);
+		VB_LOG_MESSAGE(LogLevel::Info, pCallbackData->pMessage);
 	}
 	if (messageSeverity & vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning) {
-		VB_LOG_WARN("[ Validation Layer ] %s", pCallbackData->pMessage);
+		VB_LOG_MESSAGE(LogLevel::Warning, pCallbackData->pMessage);
 	}
 	if (messageSeverity & vk::DebugUtilsMessageSeverityFlagBitsEXT::eError) {
-		VB_LOG_ERROR("[ Validation Layer ] %s", pCallbackData->pMessage);
+		VB_LOG_MESSAGE(LogLevel::Error, pCallbackData->pMessage);
 	}
 	return vk::False;
 }
@@ -130,7 +130,7 @@ auto Instance::Create(InstanceCreateInfo const& info) -> vk::Result {
 			vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation |
 			vk::DebugUtilsMessageTypeFlagBitsEXT::ePerformance |
 			vk::DebugUtilsMessageTypeFlagBitsEXT::eDeviceAddressBinding,
-		// .pfnUserCallback = DebugUtilsCallback, // The problem is here
+		.pfnUserCallback = DebugUtilsCallback, // The problem is here
 		.pUserData = nullptr,
 	};
 
@@ -163,7 +163,7 @@ auto Instance::Create(InstanceCreateInfo const& info) -> vk::Result {
 	if (bDebugUtilsEnabled) {
 		// Only with dynamic loader
 		LoadInstanceDebugUtilsFunctionsEXT(*this);
-		std::tie(result, debug_messenger) = createDebugUtilsMessengerEXT(kDebugUtilsCreateInfo, allocator);
+		std::tie(result, debug_messenger) = createDebugUtilsMessengerEXT((kDebugUtilsCreateInfo), allocator);
 		VB_CHECK_VK_RESULT(result, "Failed to set up debug messenger!");
 		VB_LOG_TRACE("Created debug messenger.");
 	}

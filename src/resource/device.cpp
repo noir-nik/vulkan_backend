@@ -144,7 +144,22 @@ void Device::Create(DeviceInfo const& info) {
 		.vulkanApiVersion = VK_API_VERSION_1_3,
 	};
 
-	if (algo::SpanContainsString(enabled_extensions, vk::KHRBufferDeviceAddressExtensionName)) {
+	auto FindDeviceAddress = [](vk::PhysicalDeviceFeatures2 const* features2) -> bool {
+		vk::BaseOutStructure const* iter = reinterpret_cast<vk::BaseOutStructure const*>(features2);
+		while (iter != nullptr) {
+			if (iter->sType == vk::StructureType::ePhysicalDeviceVulkan12Features) {
+				auto* p = reinterpret_cast<vk::PhysicalDeviceVulkan12Features const*>(iter);
+				return p->bufferDeviceAddress == true;
+			} else if (iter->sType == vk::StructureType::ePhysicalDeviceBufferDeviceAddressFeatures) {
+				auto* p = reinterpret_cast<vk::PhysicalDeviceBufferDeviceAddressFeatures const*>(iter);
+				return p->bufferDeviceAddress == true;
+			}
+			iter = iter->pNext;
+		}
+		return false;
+	};
+
+	if (algo::SpanContainsString(enabled_extensions, vk::KHRBufferDeviceAddressExtensionName) || FindDeviceAddress(info.features2)) {
 		allocatorCreateInfo.flags |= VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT;
 	}
 

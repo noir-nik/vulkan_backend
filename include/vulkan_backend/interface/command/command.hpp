@@ -35,6 +35,7 @@ public:
 	bool Copy(Image      const& dst, StagingBuffer& staging, const void* data, u32 size);
 	bool Copy(vk::Buffer const& dst, StagingBuffer& staging, const void* data, u32 size, u32 dst_offset = 0);
 	void Copy(vk::Buffer const& dst, vk::Buffer const& src,  u32 size, u32 dst_offset = 0, u32 src_offset = 0);
+	void Copy(vb::Buffer const& dst, vb::Buffer const& src);
 	void Copy(Image      const& dst, vk::Buffer const& src,  u32 src_offset = 0);
 	void Copy(vk::Buffer const& dst, Image      const& src,  u32 dst_offset, vk::Offset3D image_offset, Extent3D image_extent);
 
@@ -50,6 +51,7 @@ public:
 	void SetScissor(vk::Rect2D const& scissor);
 	void EndRendering();
 	void BindPipelineAndDescriptorSet(Pipeline const& pipeline, vk::DescriptorSet const& descriptor_set);
+	void BindPipeline(Pipeline const& pipeline);
 	void PushConstants(Pipeline const& pipeline, const void* data, u32 size);
 
 	void BindVertexBuffer(Buffer const& vertexBuffer);
@@ -63,7 +65,7 @@ public:
 
 	void Begin();
 	void End();
-	void QueueSubmit(vk::Queue const& queue, SubmitInfo const& info = {});
+	void Submit(vk::Queue const& queue, SubmitInfo const& info = {});
 	auto GetFence() const  -> vk::Fence;
 
 	auto GetResourceTypeName() const-> char const* override;

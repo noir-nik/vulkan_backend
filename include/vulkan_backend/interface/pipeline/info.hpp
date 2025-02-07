@@ -24,9 +24,10 @@ namespace VB_NAMESPACE {
 struct Source  {
 	enum Type {
 		File,
+		FileSpirV,
 		RawGlsl,
 		RawSlang,
-		RawSpirv,
+		RawSpirV,
 	};
 	// file or string with shader code
 	std::string_view data;
@@ -67,7 +68,7 @@ struct PipelineStage {
 	std::string_view entry_point = "main";
 	
 	// Shader compiler
-	std::string_view compiler = "glslangValidator";
+	std::string_view compiler = "glslc";
 
 	// Additional compiler options
 	std::string_view compile_options = "";
@@ -76,7 +77,7 @@ struct PipelineStage {
 	vk::Flags<PipelineStage::Flags> flags = PipelineStage::Flags::kLinkTimeOptimization;
 
 	// Specialization constants
-	vk::SpecializationInfo specialization_info = {};
+	vk::SpecializationInfo const& specialization_info = {};
 	// SpecializationInfo specialization_info;
 
 	bool operator==(PipelineStage const& other) const {

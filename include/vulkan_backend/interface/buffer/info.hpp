@@ -16,7 +16,6 @@ import vulkan_hpp;
 #include "vulkan_backend/interface/descriptor/descriptor.hpp"
 #include "vulkan_backend/types.hpp"
 
-
 VB_EXPORT
 namespace VB_NAMESPACE {
 struct BufferInfo {

@@ -3,10 +3,15 @@
 #ifdef VB_DISABLE_ASSERT
 #    undef VB_ASSERT
 #    define VB_ASSERT(condition, msg) (void(0))
+#    define VB_HOT_ASSERT VB_ASSERT
 #elif !defined VB_ASSERT
 #    include <cassert>
 #    define VB_ASSERT(condition, msg) assert(((condition) && (msg)))
+#    ifndef VB_HOT_ASSERT
+#       define VB_HOT_ASSERT VB_ASSERT
+#    endif
 #endif
+
 
 #ifdef VB_USE_VLA
 #define VB_VLA(type, name, count) \

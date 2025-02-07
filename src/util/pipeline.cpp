@@ -23,8 +23,8 @@ void CreateShaderModulesAndStagesInfos(Device const* device, std::span<const Pip
 						vk::PipelineShaderStageCreateInfo* p_shader_stages) {
 	for (auto [i, stage] : util::enumerate(stages)) {
 		// Load or compile shader
-		std::vector<char>		   bytes = LoadShader(stage);
-		
+		std::vector<char> bytes = LoadShader(stage);
+
 		// Create shader module
 		vk::ShaderModuleCreateInfo createInfo{
 			.codeSize = bytes.size(),

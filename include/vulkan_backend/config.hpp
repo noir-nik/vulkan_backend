@@ -23,21 +23,8 @@
 #endif
 
 /* 
-	Shaders compilation
-*/
-
-#if !defined( VB_MAX_COMPILE_STRING_SIZE )
-#define VB_MAX_COMPILE_STRING_SIZE 1024
-#endif
-
-#if !defined( VB_MAX_PATH_SIZE )
-#define VB_MAX_PATH_SIZE 256
-#endif
-
-/* 
 	Definition for cpp module
 */
-
 #if !defined( VB_EXPORT )
 #define VB_EXPORT
 #endif

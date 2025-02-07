@@ -26,6 +26,8 @@ import vk_mem_alloc;
 #include "vulkan_backend/log.hpp"
 #include "vulkan_backend/vk_result.hpp"
 #include "vulkan_backend/macros.hpp"
+#include "vulkan_backend/util/format.hpp"
+#include "vulkan_backend/util/bits.hpp"
 
 namespace VB_NAMESPACE {
 Buffer::Buffer(Device& device, BufferInfo const& info)
@@ -113,8 +115,10 @@ void Buffer::Create(Device& device, BufferInfo const& info) {
 	this->owner = &device;
 	this->info = info;
 	SetName(info.name);
+	u32 size = info.size +
+			   info.size %
+				   owner->physical_device->GetProperties2().properties.limits.minStorageBufferOffsetAlignment;
 	vk::BufferUsageFlags usage = info.usage;
-	u32					 size  = info.size;
 
 	vk::BufferCreateInfo bufferInfo{
 		.size		 = size,
@@ -127,7 +131,7 @@ void Buffer::Create(Device& device, BufferInfo const& info) {
 		.usage = VMA_MEMORY_USAGE_AUTO,
 	};
 
-	VB_LOG_TRACE("[ vmaCreateBuffer ] name = %s, size = %zu", info.name.data(), bufferInfo.size);
+	VB_LOG_TRACE("[ vmaCreateBuffer ] size = %zu, name = %s", bufferInfo.size, detail::FormatName(info.name).data());
 	VB_VK_RESULT result = vk::Result(vmaCreateBuffer(
 		owner->vma_allocator, &reinterpret_cast<VkBufferCreateInfo&>(bufferInfo), &allocInfo,
 		reinterpret_cast<VkBuffer*>(static_cast<vk::Buffer*>(this)), &allocation, &allocation_info));
@@ -156,14 +160,15 @@ void Buffer::Create(Device& device, BufferInfo const& info) {
 
 		owner->updateDescriptorSets(1, &write, 0, nullptr);
 	} else {
-		if (usage & vk::BufferUsageFlagBits::eStorageBuffer) {
-			VB_LOG_WARN("Storage buffer created without descriptor write");
+		if (TestBits(info.usage, vk::BufferUsageFlagBits::eStorageBuffer) &&
+			!TestBits(info.usage, vk::BufferUsageFlagBits::eShaderDeviceAddress)) {
+			VB_LOG_WARN("Storage buffer created without descriptor write or shader device address");
 		}
 	}
 }
 
 void Buffer::Free() {
-	VB_LOG_TRACE("[ Free ] type = %s, name = %s", GetResourceTypeName(), GetName().data());
+	VB_LOG_TRACE("[ Free ] type = %s, name = %s", GetResourceTypeName(), detail::FormatName((GetName())).data());
 	vmaDestroyBuffer(owner->vma_allocator, *this, allocation);
 	if (GetResourceID() != kNullID) {
 		info.descriptor->PushID(GetBinding(), GetResourceID());

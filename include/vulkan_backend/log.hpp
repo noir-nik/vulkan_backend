@@ -13,22 +13,27 @@ import std;
 
 #ifndef VB_LOG_TRACE
 #define VB_LOG_TRACE(fmt, ...) \
-	Logger::Get().Log(LogLevel::Trace, fmt, ## __VA_ARGS__)
+	Logger::Get().LogFormat(LogLevel::Trace, fmt, ## __VA_ARGS__)
 #endif
 
 #ifndef VB_LOG_INFO
 #define VB_LOG_INFO(fmt, ...) \
-	Logger::Get().Log(LogLevel::Info, fmt, ## __VA_ARGS__)
+	Logger::Get().LogFormat(LogLevel::Info, fmt, ## __VA_ARGS__)
 #endif
 
 #ifndef VB_LOG_WARN
 #define VB_LOG_WARN(fmt, ...) \
-	Logger::Get().Log(LogLevel::Warning, fmt, ## __VA_ARGS__)
+	Logger::Get().LogFormat(LogLevel::Warning, fmt, ## __VA_ARGS__)
 #endif
 
 #ifndef VB_LOG_ERROR
 #define VB_LOG_ERROR(fmt, ...) \
-	Logger::Get().Log(LogLevel::Error, fmt, ## __VA_ARGS__)
+	Logger::Get().LogFormat(LogLevel::Error, fmt, ## __VA_ARGS__)
+#endif
+
+#ifndef VB_LOG_MESSAGE
+#define VB_LOG_MESSAGE(level, message) \
+	Logger::Get().Log(level, message)
 #endif
 
 #endif // !VB_NO_LOG
@@ -57,7 +62,8 @@ public:
 	void SetLogLevel(LogLevel level);
 
 	// Logging function
-	void Log(LogLevel level, char const* format, ...);
+	void LogFormat(LogLevel level, char const* format, ...);
+	void Log(LogLevel level, char const* message);
 private:
 	Logger() = default;
 	void (*messageCallback)(LogLevel, char const*) = MessageCallbackDefault;

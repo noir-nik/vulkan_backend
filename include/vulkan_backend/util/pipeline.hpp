@@ -3,9 +3,14 @@
 #ifndef VB_USE_STD_MODULE
 #include <span>
 #include <string_view>
-
 #elif defined(VB_DEV)
 import std;
+#endif
+
+#ifndef VB_USE_VULKAN_MODULE
+#include <vulkan/vulkan.hpp>
+#elif defined(VB_DEV)
+import vulkan_hpp;
 #endif
 
 #include "vulkan_backend/fwd.hpp"

@@ -71,6 +71,24 @@ void Command::Copy(vk::Buffer const& dst, vk::Buffer const& src, u32 size, u32 d
 	copyBuffer2(&copyBufferInfo);
 }
 
+void Command::Copy(vb::Buffer const& dst, vb::Buffer const& src) {
+	VB_HOT_ASSERT(dst.GetSize() >= src.GetSize(), "Dst buffer is too small");
+	vk::BufferCopy2 copyRegion{
+		.srcOffset = 0,
+		.dstOffset = 0,
+		.size = dst.GetSize(),
+	};
+
+	vk::CopyBufferInfo2 copyBufferInfo{
+		.srcBuffer = src,
+		.dstBuffer = dst,
+		.regionCount = 1,
+		.pRegions = &copyRegion
+	};
+
+	copyBuffer2(&copyBufferInfo);
+}
+
 bool Command::Copy(Image const& dst, StagingBuffer& staging, void const* data, u32 size) {
 	VB_LOG_TRACE("[ CmdCopy ] size: %u, offset: %u", size, staging.GetOffset());
 	if (staging.GetSize() - staging.GetOffset() < size) [[unlikely]] {
@@ -392,6 +410,10 @@ void Command::EndRendering() {
 	endRendering();
 }
 
+void Command::BindPipeline(Pipeline const& pipeline) {
+	bindPipeline(pipeline.point, pipeline);
+}
+
 void Command::BindPipelineAndDescriptorSet(Pipeline const& pipeline, vk::DescriptorSet const& descriptor_set) {
 	bindPipeline(pipeline.point, pipeline);
 	// TODO(nm): bind only if not compatible for used descriptor sets or push constant range
@@ -451,6 +473,7 @@ void Command::Begin() {
 	vk::CommandBufferBeginInfo beginInfo{};
 	beginInfo.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
 	result = begin(&beginInfo);
+	VB_CHECK_VK_RESULT(result, "Failed to begin command buffer");
 }
 
 void Command::End() {
@@ -458,7 +481,7 @@ void Command::End() {
 	VB_CHECK_VK_RESULT(result, "Failed to end command buffer");
 }
 
-void Command::QueueSubmit(vk::Queue const& queue, SubmitInfo const& info) {
+void Command::Submit(vk::Queue const& queue, SubmitInfo const& info) {
 
 	vk::CommandBufferSubmitInfo cmdInfo {
 		.commandBuffer = *this,

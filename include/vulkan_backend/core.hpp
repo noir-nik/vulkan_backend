@@ -18,5 +18,6 @@
 #include "vulkan_backend/vk_result.hpp"
 #include "vulkan_backend/vulkan_functions.hpp"
 #include "vulkan_backend/util/enumerate.hpp"
+#include "vulkan_backend/util/specialization_map.hpp"
 
 #include "constants/constants.hpp"

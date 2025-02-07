@@ -19,6 +19,7 @@ import vulkan_hpp;
 #include "vulkan_backend/macros.hpp"
 #include "vulkan_backend/util/pipeline.hpp"
 #include "vulkan_backend/vk_result.hpp"
+#include "vulkan_backend/util/format.hpp"
 
 namespace VB_NAMESPACE {
 
@@ -60,6 +61,11 @@ void Pipeline::Create(PipelineInfo const& info) {
 	vk::ShaderModule shader_modules[1];
 	vk::PipelineShaderStageCreateInfo shader_stages[1];
 	CreateShaderModulesAndStagesInfos(owner, info.stages, shader_modules, shader_stages);
+
+	// for (u32 i = 0; i < info.stages[0].specialization_info.mapEntryCount; ++i) {
+	// 	auto e = info.stages[0].specialization_info.pMapEntries[i];
+	// 	VB_LOG_TRACE("%u %u %zu", e.constantID, e.offset, e.size);
+	// }
 
 	vk::ComputePipelineCreateInfo pipelineInfo{
 		.stage				= shader_stages[0],
@@ -161,7 +167,7 @@ auto Pipeline::GetResourceTypeName() const -> char const* { return "PipelineReso
 Pipeline::~Pipeline() { Free(); }
 
 void Pipeline::Free() {
-	VB_LOG_TRACE("[ Free ] type = %s, name = %s", GetResourceTypeName(), GetName().data());
+	VB_LOG_TRACE("[ Free ] type = %s, name = %s", GetResourceTypeName(), detail::FormatName((GetName())).data());
 	owner->destroyPipeline(*this, owner->GetAllocator());
 	// Layout is destroyed by device
 	// owner->destroyPipelineLayout(layout, owner->GetAllocator());

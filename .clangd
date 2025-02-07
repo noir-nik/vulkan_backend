@@ -11,5 +11,5 @@ CompileFlags:
     -DVULKAN_HPP_NO_UNION_CONSTRUCTORS,
     -DVULKAN_HPP_NO_STRUCT_SETTERS,
     -DVULKAN_HPP_ASSERT_ON_RESULT=(void(0)),
-    # -fmodule-file=vulkan_hpp=build/CMakeFiles/VulkanHppModule.dir/vulkan_hpp.pcm,
+    # -DVB_BUILD_CPP_MODULE,
   ]

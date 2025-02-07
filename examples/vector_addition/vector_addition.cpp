@@ -125,7 +125,7 @@ int main(){
 
 	// Provide compile options for compute shader
 	char compile_options[128];
-	std::snprintf(compile_options, sizeof(compile_options), 
+	std::snprintf(compile_options, sizeof(compile_options) - 1, 
 		"-DWORKGROUP_SIZE=%d -DBINDING_BUFFER=%d", 
 		kWorkgroupSize, kBindingBuffer);
 
@@ -196,7 +196,7 @@ int main(){
 
 	// End command buffer, submit and wait on queue
 	cmd.End();
-	cmd.QueueSubmit(queue);
+	cmd.Submit(queue);
 	device.WaitQueue(queue);
 	
 	// Map result

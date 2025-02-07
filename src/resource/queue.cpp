@@ -35,6 +35,12 @@ void Queue::Submit(
 	VB_CHECK_VK_RESULT(result, "Failed to submit command buffer");
 }
 
+void Queue::Wait() const {
+	auto result = waitIdle();
+	VB_CHECK_VK_RESULT(result, "Failed to wait queue idle");
+}
+
+
 auto Queue::GetFamilyIndex() const -> u32 {
 	return family;
 }

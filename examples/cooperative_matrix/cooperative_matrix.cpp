@@ -10,17 +10,21 @@ import vulkan_backend;
 #endif
 
 #include "util.hpp"
+#include "float16_t.hpp"
+#include "matrix.hpp"
 
-int constexpr kBindingBuffer		 = 0;
-int constexpr kMaxDescriptorBindings = 128;
-char constexpr const* extensions[]	 = {vk::KHRCooperativeMatrixExtensionName,
-										vk::NVCooperativeMatrix2ExtensionName};
-vb::QueueInfo constexpr queue_info = {.flags = vk::QueueFlagBits::eCompute};
+using std::uint32_t;
+using numeric::float16_t;
+
+bool bVerbose = false;
+char constexpr const* kExtensions[]		  = {vk::KHRCooperativeMatrixExtensionName,
+											 vk::NVCooperativeMatrix2ExtensionName};
+vb::QueueInfo constexpr kComputeQueueInfo = {.flags = vk::QueueFlagBits::eCompute};
 
 struct PhysicalDeviceExt : public vb::PhysicalDevice {
-	vk::PhysicalDeviceCooperativeMatrixFeaturesKHR cooperative_matrix_features{};
+	vk::PhysicalDeviceCooperativeMatrixFeaturesKHR	 cooperative_matrix_features{};
 	vk::PhysicalDeviceCooperativeMatrixPropertiesKHR cooperative_matrix_properties{};
-	vk::PhysicalDeviceCooperativeMatrix2FeaturesNV cooperative_matrix_2_features{};
+	vk::PhysicalDeviceCooperativeMatrix2FeaturesNV	 cooperative_matrix_2_features{};
 	vk::PhysicalDeviceCooperativeMatrix2PropertiesNV cooperative_matrix_properties2{};
 
 	PhysicalDeviceExt(vk::PhysicalDevice const& physical_device) : PhysicalDevice(physical_device) {
@@ -40,32 +44,178 @@ struct PhysicalDeviceExt : public vb::PhysicalDevice {
 	}
 
 	bool IsSuitable() const {
-		bool has_extensions					   = SupportsExtensions(extensions);
-		bool has_queue						   = SupportsQueue(queue_info);
+		bool has_extensions					   = SupportsExtensions(kExtensions);
+		bool has_queue						   = SupportsQueue(kComputeQueueInfo);
 		bool has_cooperative_matrix_features   = SupportsCooperativeMatrixFeatures();
 		bool has_cooperative_matrix_2_features = SupportsCooperativeMatrix2Features();
 		bool is_suitable = has_extensions && has_queue && has_cooperative_matrix_features &&
 						   has_cooperative_matrix_2_features;
-		std::printf("Device: %s\n", GetProperties2().properties.deviceName.data());
-		std::printf("Supports extensions: %s\n", FormatBool(has_extensions));
-		std::printf("Supports queue: %s\n", FormatBool(has_queue));
-		std::printf("Supports cooperative matrix features: %s\n",
-					FormatBool(has_cooperative_matrix_features));
-		std::printf("Supports cooperative matrix 2 features: %s\n",
-					FormatBool(has_cooperative_matrix_2_features));
-		std::printf("IsSuitable: %d\n", is_suitable);
+		if (bVerbose) {
+			std::printf("Device: %s\n", GetProperties2().properties.deviceName.data());
+			std::printf("Supports extensions: %s\n", FormatBool(has_extensions));
+			std::printf("Supports queue: %s\n", FormatBool(has_queue));
+			std::printf("Supports cooperative matrix features: %s\n",
+						FormatBool(has_cooperative_matrix_features));
+			std::printf("Supports cooperative matrix 2 features: %s\n",
+						FormatBool(has_cooperative_matrix_2_features));
+			std::printf("IsSuitable: %d\n", is_suitable);
+		}	
 		return is_suitable;
 	}
 };
 
-int main() {
-	// === Setup ===
-	vb::SetLogLevel(vb::LogLevel::Trace);
+struct TestParams{
+	uint32_t M, N, K;
+	uint32_t tileM, tileN, tileK;
+	uint32_t workgroupSize;
 
-	vb::Instance instance({.optional_layers = {{vb::kValidationLayerName}}});
+	float alpha;
+	float beta;
 
-	int selected_device_index = instance.GetPhysicalDevices().size();
-	std::vector<PhysicalDeviceExt> physical_devices;
+	vb::Device&			device;
+	vb::Queue const&	queue;
+	vb::Command&		cmd;
+	vk::PipelineLayout& pipeline_layout;
+	std::span<vk::CooperativeMatrixFlexibleDimensionsPropertiesNV const> const& flexibleDimensionsProperties;
+};
+
+template <typename AType, typename ResultType>
+void RunTest(TestParams const& params) {
+	uint32_t tileM = params.tileM;
+	uint32_t tileN = params.tileN;
+	uint32_t tileK = params.tileK == uint32_t{} ? GetOptimalTileK<AType, ResultType>() : params.tileK;
+
+	std::printf("Running test with AType=%s, ResultType=%s, M=%d, N=%d, K=%d, tileM=%d, tileN=%d, tileK=%d, "
+				"workgroupSize=%d\n",
+				TypeToString<AType>(), TypeToString<ResultType>(), params.M, params.N, params.K, tileM, tileN,
+				tileK, params.workgroupSize);
+
+	if (!ValidateParameters<AType, ResultType>(params.M, params.N, params.K, tileM, tileN,
+											  tileK, params.workgroupSize,
+											  params.flexibleDimensionsProperties)) {
+		std::printf("No suitable flexible dimension property found.");
+		return;
+	}
+
+	auto& device = params.device;
+	auto& queue	 = params.queue;
+	auto& cmd	 = params.cmd;
+
+	Matrix<AType>	   matA{device, params.M, params.K};
+	Matrix<AType>	   matB{device, params.K, params.N};
+	Matrix<ResultType> matC{device, params.M, params.N};
+	Matrix<ResultType> matD{device, params.M, params.N};
+
+	// Fill CPU matrices
+	InitMatrixAB(matA);
+	InitMatrixAB(matB);
+	InitMatrixC(matC);
+	InitMatrixD(matD);
+
+	if (bVerbose) {
+		std::printf("Matrix A:\n");
+		PrintMatrix(matA);
+		std::printf("Matrix B:\n");
+		PrintMatrix(matB);
+		std::printf("Matrix C:\n");
+		PrintMatrix(matC);
+		std::printf("Matrix D:\n");
+		PrintMatrix(matD);
+	}
+
+	uint32_t const specData[] = {
+		params.M, // Matrix size
+		params.N,
+		params.K,
+		tileM, // Cooperative matrix size
+		tileN,
+		tileK,
+		params.workgroupSize,
+		reinterpret_cast<uint32_t const&>(params.alpha),
+		reinterpret_cast<uint32_t const&>(params.beta),
+	};
+
+	struct Constants {
+		vk::DeviceAddress inputA;
+		vk::DeviceAddress inputB;
+		vk::DeviceAddress inputC;
+		vk::DeviceAddress outputD;
+	};
+
+	Constants constants{
+		.inputA	 = matA.deviceBuffer.GetAddress(),
+		.inputB	 = matB.deviceBuffer.GetAddress(),
+		.inputC	 = matC.deviceBuffer.GetAddress(),
+		.outputD = matD.deviceBuffer.GetAddress(),
+	};
+
+	char spv_file[256];
+	std::snprintf(spv_file, sizeof(spv_file) - 1, "cooperative_matrix_%c%llu_%c%llu.comp.spv",
+				  TypeToString<AType>()[0], sizeof(AType) * 8, TypeToString<ResultType>()[0],
+				  sizeof(ResultType) * 8);
+
+	vb::Pipeline pipeline(device, {
+	  .stages = {{{
+		  .stage			   = vk::ShaderStageFlagBits::eCompute,
+		  .source			   = {spv_file, vb::Source::Type::FileSpirV},
+		  .specialization_info = vb::util::MakeSpecializationInfo(specData),
+	  }}},
+	  .layout = params.pipeline_layout,
+	  .name = "Cooperative Matrix",
+  });
+
+	// Record and submit command buffer
+	cmd.Begin();
+	cmd.Copy(matA.deviceBuffer, matA.hostBuffer);
+	cmd.Copy(matB.deviceBuffer, matB.hostBuffer);
+	cmd.Copy(matC.deviceBuffer, matC.hostBuffer);
+	cmd.Barrier(matA.deviceBuffer);
+	cmd.Barrier(matB.deviceBuffer);
+	cmd.Barrier(matC.deviceBuffer);
+	cmd.BindPipeline(pipeline);
+	cmd.PushConstants(pipeline,  &constants, sizeof(constants));
+	cmd.Dispatch(params.N / tileN, params.M / tileM, 1);
+	cmd.Barrier(matD.deviceBuffer);
+	cmd.Copy(matD.hostBuffer, matD.deviceBuffer);
+	cmd.End();
+	cmd.Submit(queue);
+	queue.Wait();
+
+	if (bVerbose) {
+		std::printf("Matrix Result:\n");
+		PrintMatrix(matD);
+	}
+
+	std::printf("Validating result...\n");
+	bool bCorrect = ValidateMultiplication(matA, matB, matC, matD, ResultType(params.alpha), ResultType(params.beta));
+	std::printf("Result: %s\n", bCorrect ? "CORRECT" : "INCORRECT");
+	if (!bCorrect) {
+		std::printf("Actual:\n");
+		PrintMatrix(matD);
+		std::printf("Expected:\n");
+		MatMulAdd(matA, matB, matC, matD, ResultType(params.alpha), ResultType(params.beta));
+		PrintMatrix(matD);
+	}
+}
+
+int main(int argc, char* argv[]) {
+	// Parse arguments
+	constexpr std::string_view kVerboseArg = "--verbose";
+	std::printf("Usage: %s [%s]\n", argv[0], kVerboseArg.data());
+	for (char const* arg : std::span(argv, argc)) {
+		if (arg == kVerboseArg) {
+			bVerbose = true;
+		}
+	}
+
+	// Setup 
+	vb::SetLogLevel(vb::LogLevel::Info);
+
+	vb::Instance instance({.optional_layers = {{vb::kValidationLayerName}}, 
+						   .optional_extensions = {{vk::EXTDebugUtilsExtensionName}}});
+
+	int	 selected_device_index = instance.GetPhysicalDevices().size();;
+	std::vector<PhysicalDeviceExt> physical_devices;  
 	physical_devices.reserve(instance.GetPhysicalDevices().size());
 	for (auto& vk_device : instance.GetPhysicalDevices()) {
 		physical_devices.emplace_back(vk_device);
@@ -84,9 +234,18 @@ int main() {
 
 	PhysicalDeviceExt& physical_device = physical_devices[selected_device_index];
 
-
 	// Create device
-	vk::PhysicalDeviceFeatures2 features2{};
+	vk::PhysicalDeviceFeatures2		   features2{};
+	vk::PhysicalDeviceVulkan11Features vulkan11_features{.storageBuffer16BitAccess = vk::True};
+	vk::PhysicalDeviceVulkan12Features vulkan12_features{
+		.storageBuffer8BitAccess = vk::True,
+		.shaderFloat16			 = vk::True,
+		.shaderInt8				 = vk::True,
+		.bufferDeviceAddress	 = vk::True,
+		.vulkanMemoryModel		 = vk::True,
+	};
+	vk::PhysicalDeviceVulkan13Features vulkan13_features{.synchronization2 = vk::True,
+														 .maintenance4	   = vk::True};
 
 	vk::PhysicalDeviceCooperativeMatrixFeaturesKHR cooperative_matrix_features{
 		.cooperativeMatrix					 = vk::True,
@@ -98,41 +257,69 @@ int main() {
 		.cooperativeMatrixTensorAddressing	 = vk::True,
 	};
 
-	void* feature_chain[] = {&features2, &cooperative_matrix_features, &cooperative_matrix_2_features};
-	vb::SetupStructureChain(feature_chain);
+	vb::SetupStructureChain({
+		{&features2, &vulkan11_features, &vulkan12_features, &vulkan13_features, &cooperative_matrix_features,
+		 &cooperative_matrix_2_features}
+	});
 
 	vb::Device device(instance, physical_device,
-					  {.queues	   = {{{.queueFamilyIndex = physical_device.FindQueueFamilyIndex(queue_info),
+					  {.queues	   = {{{.queueFamilyIndex = physical_device.FindQueueFamilyIndex(kComputeQueueInfo),
 										.queueCount		  = 1}}},
-					   .extensions = extensions,
+					   .extensions = kExtensions,
 					   .features2 = &features2});
 
-	vb::BindlessDescriptor bindless_descriptor(
-		device, {.bindings = {{{.binding		 = kBindingBuffer,
-								.descriptorType	 = vk::DescriptorType::eStorageBuffer,
-								.descriptorCount = kMaxDescriptorBindings,
-								.stageFlags		 = vk::ShaderStageFlagBits::eCompute}}}});
+	vk::PipelineLayout pipeline_layout =
+		device.GetOrCreatePipelineLayout({.push_constant_ranges = {{{
+											  .stageFlags = vk::ShaderStageFlagBits::eAll,
+											  .offset	  = 0,
+											  .size		  = physical_device.GetMaxPushConstantsSize(),
+										  }}}});
 
-	vb::Queue const& queue = *device.GetQueue(queue_info);
-
-	vk::PipelineLayout bindless_pipeline_layout(device.GetOrCreatePipelineLayout(
-		{.descriptor_set_layouts = {{bindless_descriptor.layout}},
-		 .push_constant_ranges	 = {{{
-			   .stageFlags = vk::ShaderStageFlagBits::eAll,
-			   .offset	   = 0,
-			   .size	   = physical_device.GetMaxPushConstantsSize(),
-		   }}}}));
+	vb::Queue const& queue = *device.GetQueue(kComputeQueueInfo);
+	vb::Command cmd(device, queue.GetFamilyIndex());
 
 	// Load extension functions from dynamic library
 	vb::LoadInstanceCooperativeMatrixFunctionsKHR(instance);
 	vb::LoadInstanceCooperativeMatrix2FunctionsNV(instance);
 
-	// === Application ===
-	auto [result, cooperative_matrix_properties] = physical_device.getCooperativeMatrixPropertiesKHR();
+	auto [result, cooperativeMatrixProperties] = physical_device.getCooperativeMatrixPropertiesKHR();
 	vb::CheckVkResult(result, "Failed to get cooperative matrix properties");
-	PrintCooperativeMatrixProperties(cooperative_matrix_properties);
-
-	auto [result_2, cooperative_matrix_2_properties] = physical_device.getCooperativeMatrixFlexibleDimensionsPropertiesNV();
+	auto [result_2, flexibleDimensionsProperties] = physical_device.getCooperativeMatrixFlexibleDimensionsPropertiesNV();
 	vb::CheckVkResult(result_2, "Failed to get cooperative matrix 2 properties");
-	PrintCooperativeMatrix2Properties(cooperative_matrix_2_properties);
+	if (bVerbose) {
+		PrintCooperativeMatrixProperties(cooperativeMatrixProperties);
+		PrintCooperativeMatrix2Properties(flexibleDimensionsProperties);
+	}
+
+	// Run tests
+	TestParams params{
+		// M, N, K should be multiple of tileM, tileN, tileK
+		.M = 256,
+		.N = 256,
+		.K = 256,
+
+		// tileM, tileN, tileK should be multiple of MGranularity, NGranularity, KGranularity
+		.tileM = 128,
+		.tileN = 128,
+		.tileK{}, // Select automatically
+
+		// workgroupSize should match workgroupInvocations
+		.workgroupSize = 128,
+
+		// Coefficients of matrix multiply alpha*A*B + beta*C = Output
+		.alpha = 2.0f,
+		.beta  = 3.0f,
+
+		// Handles
+		.device			 = device,
+		.queue			 = queue,
+		.cmd			 = cmd,
+		.pipeline_layout = pipeline_layout,
+		.flexibleDimensionsProperties = flexibleDimensionsProperties,
+	};
+
+	RunTest<uint8_t, uint32_t>(params);
+	RunTest<int8_t, int32_t>(params);
+	RunTest<float16_t, float16_t>(params);
+	RunTest<float16_t, float>(params);
 }

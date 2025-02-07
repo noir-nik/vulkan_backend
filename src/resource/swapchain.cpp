@@ -99,7 +99,7 @@ void Swapchain::SubmitAndPresent(vk::Queue const& submit, vk::Queue const& prese
 	auto& cmd = GetCommandBuffer();
 
 	cmd.End();
-	cmd.QueueSubmit( submit, {
+	cmd.Submit( submit, {
 		.waitSemaphoreInfos   = {{{.semaphore = GetImageAvailableSemaphore()}}},
 		.signalSemaphoreInfos = {{{.semaphore = GetRenderFinishedSemaphore()}}}
 	});

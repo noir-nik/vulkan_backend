@@ -24,9 +24,11 @@ import vk_mem_alloc;
 #include "vulkan_backend/interface/image/image.hpp"
 #include "vulkan_backend/interface/physical_device/physical_device.hpp"
 #include "vulkan_backend/log.hpp"
-#include "vulkan_backend/util/bits.hpp"
-#include "vulkan_backend/vk_result.hpp"
 #include "vulkan_backend/macros.hpp"
+#include "vulkan_backend/util/bits.hpp"
+#include "vulkan_backend/util/format.hpp"
+#include "vulkan_backend/vk_result.hpp"
+
 
 namespace VB_NAMESPACE {
 Image::Image(Device& device, ImageInfo const& info)
@@ -97,8 +99,8 @@ void Image::Create(ImageInfo const& info) {
 									  : 0),
 	};
 
-	VB_LOG_TRACE("[ vmaCreateImage ] name = %s, extent = %ux%ux%u, layers = %u", info.name.data(),
-				 info.extent.width, info.extent.height, info.extent.depth, info.layers);
+	VB_LOG_TRACE("[ vmaCreateImage ] extent = %ux%ux%u, layers = %u name = %s",
+				 info.extent.width, info.extent.height, info.extent.depth, info.layers, detail::FormatName(info.name).data());
 	VB_VK_RESULT result = vk::Result(vmaCreateImage(
 		owner->vma_allocator, reinterpret_cast<VkImageCreateInfo*>(&imageInfo), &allocInfo,
 		reinterpret_cast<VkImage*>(static_cast<vk::Image*>(this)), &allocation, nullptr));
@@ -201,7 +203,7 @@ void Image::SetDebugUtilsViewName(char const* name) {
 }
 
 void Image::Free() {
-	VB_LOG_TRACE("[ Free ] type = %s, name = %s", GetResourceTypeName(), GetName().data());
+	VB_LOG_TRACE("[ Free ] type = %s, name = %s", GetResourceTypeName(), detail::FormatName(GetName()).data());
 	if (!fromSwapchain) {
 		for (VkImageView layerView : layersView) {
 			owner->destroyImageView(layerView, owner->GetAllocator());

@@ -30,7 +30,7 @@ struct InstanceCreateInfo {
 	std::span<char const* const> optional_extensions = {};
 	
 	// Optional data, provides useful information to driver
-	vk::ApplicationInfo const& application_info = {.apiVersion = vk::makeApiVersion(1, 3, 0, 0)};
+	vk::ApplicationInfo const& application_info = {.apiVersion = vk::ApiVersion13};
 
 	// Optional allocator
 	vk::AllocationCallbacks* allocator = nullptr;

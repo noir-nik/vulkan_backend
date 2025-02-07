@@ -8,9 +8,6 @@ namespace VB_NAMESPACE {
 class GpuResource {
 public:
 	u32 static constexpr inline kNullID = ~0u;
-	// Get binding in bindless descriptor
-	// inline auto GetBinding() const -> u32 { return binding; }
-	// inline void SetBinding(u32 b) { binding = b; }
 	// Get position in bindless array with respective binding
 	inline auto GetResourceID() const -> u32 { return resourceID; }
 	// Bindless resource ID is usually set on creation
