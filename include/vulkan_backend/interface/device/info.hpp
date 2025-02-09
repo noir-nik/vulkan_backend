@@ -2,6 +2,7 @@
 
 #ifndef VB_USE_STD_MODULE
 #include <span>
+#include <string_view>
 #elif defined(VB_DEV)
 import std;
 #endif
@@ -13,13 +14,6 @@ import vulkan_hpp;
 #endif
 
 #include "vulkan_backend/fwd.hpp"
-#include "vulkan_backend/types.hpp"
-#include "vulkan_backend/interface/queue/info.hpp"
-#include "vulkan_backend/classes/structure_chain.hpp"
-#include "vulkan_backend/interface/descriptor/info.hpp"
-#include "vulkan_backend/defaults/descriptor.hpp"
-#include "vulkan_backend/defaults/device.hpp"
-
 
 VB_EXPORT
 namespace VB_NAMESPACE {
@@ -45,10 +39,11 @@ struct DeviceInfo {
 	// - SetupStructureChain()
 	// - AppendStructureChain()
 	// - InsertStructureAfter()
-	vk::PhysicalDeviceFeatures2* const features2 = nullptr;
+	vk::PhysicalDeviceFeatures2 const* const features2 = nullptr;
 
 	// Give a name to device or use name of respective physical device
-	std::string_view name = "";
+	std::string_view const name = "";
+	bool check_vk_results = true;
 };
 
 } // namespace VB_NAMESPACE

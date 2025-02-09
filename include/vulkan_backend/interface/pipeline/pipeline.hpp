@@ -31,15 +31,14 @@ class Pipeline : public vk::Pipeline, public Named, public ResourceBase<Device> 
 	Pipeline& operator=(Pipeline&& other);
 
 	~Pipeline();
-
+	auto GetDevice() const -> Device& { return *GetOwner(); }
+	auto GetLayout() const -> vk::PipelineLayout { return layout; }
+	auto GetBindPoint() const -> vk::PipelineBindPoint { return point; }
   private:
 	void Create(PipelineInfo const& info);
 	void Create(GraphicsPipelineInfo const& info);
 	auto GetResourceTypeName() const -> char const* override;
 	void Free() override;
-
-
-
 	vk::PipelineLayout	  layout;
 	vk::PipelineBindPoint point;
 	friend Device;

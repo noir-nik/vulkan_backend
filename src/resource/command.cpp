@@ -12,7 +12,6 @@ import vulkan_hpp;
 #endif
 
 #include "vulkan_backend/interface/command/command.hpp"
-#include "vulkan_backend/interface/instance/instance.hpp"
 #include "vulkan_backend/interface/device/device.hpp"
 #include "vulkan_backend/interface/buffer/buffer.hpp"
 #include "vulkan_backend/interface/image/image.hpp"
@@ -24,9 +23,44 @@ import vulkan_hpp;
 
 
 namespace VB_NAMESPACE {
-Command::Command(Device& device, u32 queueFamilyindex) : ResourceBase(&device) {
-	Create(queueFamilyindex);
+Command::Command(Device& device, u32 queue_family_index) {
+	VB_VK_RESULT result = Create(device, queue_family_index, true);
 }
+
+Command::Command() : vk::CommandBuffer{}, ResourceBase{} {}
+
+auto Command::Create(Device& device, u32 queue_family_index, bool check_enabled) -> vk::Result {
+	ResourceBase::SetOwner(&device);
+
+	vk::CommandPoolCreateInfo poolInfo {
+		// .flags = 0, // do not use VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT
+		.queueFamilyIndex = queue_family_index
+	};
+
+	vk::Result result;
+	result = GetDevice().createCommandPool(&poolInfo, GetDevice().GetAllocator(), &pool);
+	VB_VERIFY_VK_RESULT(result, check_enabled, "Failed to create command pool!", {});
+
+	vk::CommandBufferAllocateInfo allocInfo {
+		.level = vk::CommandBufferLevel::ePrimary,
+		.commandBufferCount = 1,
+	};
+	allocInfo.commandPool = pool;
+
+	vk::CommandBuffer commandBuffer;
+	result = GetDevice().allocateCommandBuffers(&allocInfo, &commandBuffer);
+	VB_VERIFY_VK_RESULT(result, check_enabled, "Failed to allocate command buffer!", {});
+	vk::CommandBuffer::operator=(commandBuffer);
+
+	vk::FenceCreateInfo fence_info{
+		.flags = vk::FenceCreateFlagBits::eSignaled,
+	};
+
+	std::tie(result, fence) = GetDevice().createFence(fence_info, GetDevice().GetAllocator());
+	VB_VERIFY_VK_RESULT(result, check_enabled, "Failed to create fence!", {});
+	return vk::Result::eSuccess;
+}
+
 Command::Command(Command&& other)
 		: vk::CommandBuffer(std::exchange(other, {})), ResourceBase(std::move(other)),
 		  pool(std::exchange(other.pool, {})), fence(std::exchange(other.fence, {})) {}
@@ -39,17 +73,21 @@ Command& Command::operator=(Command&& other) {
 	return *this;
 }
 
-Command::~Command() { Free(); }
-	
+Command::~Command() {
+	if (vk::CommandBuffer::operator bool()) {
+		Free();
+	}
+}
+
 bool Command::Copy(vk::Buffer const& dst, StagingBuffer& staging, void const* data, u32 size, u32 dstOfsset) {
 	VB_LOG_TRACE("[ CmdCopy ] size: %u, offset: %u", size, staging.GetOffset());
 	if (staging.GetSize() - staging.GetOffset() < size) [[unlikely]] {
 		VB_LOG_WARN("Not enough size in staging buffer to copy");
 		return false;
 	}
-	vmaCopyMemoryToAllocation(owner->vma_allocator, data, staging.allocation, staging.GetOffset(), size);
+	vmaCopyMemoryToAllocation(GetDevice().GetVmaAllocator(), data, staging.allocation, staging.GetOffset(), size);
 	Copy(dst, staging, size, dstOfsset, staging.GetOffset());
-	staging.offset += size;
+	staging.SetOffset(staging.GetOffset() + size);
 	return true;
 }
 
@@ -97,13 +135,13 @@ bool Command::Copy(Image const& dst, StagingBuffer& staging, void const* data, u
 	}
 	std::memcpy(staging.GetPtr() + staging.GetOffset(), data, size);
 	Copy(dst, staging, staging.GetOffset());
-	staging.offset += size;
+	staging.SetOffset(staging.GetOffset() + size);
 	return true;
 }
 
 void Command::Copy(Image const &dst, vk::Buffer const &src, u32 srcOffset) {
-	VB_ASSERT(!(dst.aspect & vk::ImageAspectFlagBits::eDepth ||
-				dst.aspect & vk::ImageAspectFlagBits::eStencil),
+	VB_ASSERT(!(dst.GetAspect() & vk::ImageAspectFlagBits::eDepth ||
+				dst.GetAspect() & vk::ImageAspectFlagBits::eStencil),
 			  "CmdCopy doesnt't support depth/stencil images");
 	vk::BufferImageCopy2 region{
 		.pNext = nullptr,
@@ -117,13 +155,13 @@ void Command::Copy(Image const &dst, vk::Buffer const &src, u32 srcOffset) {
 			.layerCount = 1,
 		},
 		.imageOffset = {0, 0, 0},
-		.imageExtent = dst.info.extent,
+		.imageExtent = dst.GetExtent(),
 	};
 
 	vk::CopyBufferToImageInfo2 copyBufferToImageInfo{
 		.srcBuffer = src,
 		.dstImage = dst,
-		.dstImageLayout = dst.layout,
+		.dstImageLayout = dst.GetLayout(),
 		.regionCount = 1,
 		.pRegions = &region
 	};
@@ -133,8 +171,8 @@ void Command::Copy(Image const &dst, vk::Buffer const &src, u32 srcOffset) {
 
 void Command::Copy(vk::Buffer const &dst, Image const &src, u32 dstOffset,
 				vk::Offset3D imageOffset, Extent3D imageExtent) {
-	VB_ASSERT(!(src.aspect & vk::ImageAspectFlagBits::eDepth ||
-				src.aspect & vk::ImageAspectFlagBits::eStencil),
+	VB_ASSERT(!(src.GetAspect() & vk::ImageAspectFlagBits::eDepth ||
+				src.GetAspect() & vk::ImageAspectFlagBits::eStencil),
 			"CmdCopy doesn't support depth/stencil images");
 	vk::BufferImageCopy2 region{
 		.bufferOffset = dstOffset,
@@ -147,12 +185,12 @@ void Command::Copy(vk::Buffer const &dst, Image const &src, u32 dstOffset,
 			.layerCount = 1,
 		},
 		.imageOffset = {imageOffset.x, imageOffset.y, imageOffset.z},
-		.imageExtent = src.info.extent
+		.imageExtent = src.GetExtent()
 	};
 
 	vk::CopyImageToBufferInfo2 copyInfo{
 		.srcImage = src,
-		.srcImageLayout = (vk::ImageLayout)src.layout,
+		.srcImageLayout = (vk::ImageLayout)src.GetLayout(),
 		.dstBuffer = dst,
 		.regionCount = 1,
 		.pRegions = &region,
@@ -162,7 +200,7 @@ void Command::Copy(vk::Buffer const &dst, Image const &src, u32 dstOffset,
 
 void Command::Barrier(Image& img, ImageBarrier const& barrier) {
 	vk::ImageSubresourceRange range = {
-		.aspectMask = img.aspect,
+		.aspectMask = img.GetAspect(),
 		.baseMipLevel = 0,
 		.levelCount = vk::RemainingMipLevels,
 		.baseArrayLayer = 0,
@@ -176,10 +214,10 @@ void Command::Barrier(Image& img, ImageBarrier const& barrier) {
 		.dstStageMask        =   barrier.memoryBarrier.dstStageMask,
 		.dstAccessMask       =          barrier.memoryBarrier.dstAccessMask,
 		.oldLayout           = (barrier.oldLayout == vk::ImageLayout::eUndefined
-									? img.layout
+									? img.GetLayout()
 									: barrier.oldLayout),
 		.newLayout           = (barrier.newLayout == vk::ImageLayout::eUndefined
-									? img.layout
+									? img.GetLayout()
 									: barrier.newLayout),
 		.srcQueueFamilyIndex = barrier.srcQueueFamilyIndex,
 		.dstQueueFamilyIndex = barrier.dstQueueFamilyIndex,
@@ -199,7 +237,7 @@ void Command::Barrier(Image& img, ImageBarrier const& barrier) {
 	};
 
 	pipelineBarrier2(&dependency);
-	img.layout = barrier.newLayout;
+	img.SetLayout(barrier.newLayout);
 }
 
 void Command::Barrier(vk::Buffer const& buf, BufferBarrier const& barrier) {
@@ -243,7 +281,7 @@ void Command::Barrier(MemoryBarrier const& barrier) {
 void Command::ClearColorImage(Image const& img, vk::ClearColorValue const& color) {
 	vk::ClearColorValue clearColor{{{color.float32[0], color.float32[1], color.float32[2], color.float32[3]}}};
 	vk::ImageSubresourceRange range = {
-		.aspectMask = (vk::ImageAspectFlags)img.aspect,
+		.aspectMask = (vk::ImageAspectFlags)img.GetAspect(),
 		.baseMipLevel = 0,
 		.levelCount = vk::RemainingMipLevels,
 		.baseArrayLayer = 0,
@@ -251,15 +289,15 @@ void Command::ClearColorImage(Image const& img, vk::ClearColorValue const& color
 	};
 
 	clearColorImage(img,
-		(vk::ImageLayout)img.layout, &clearColor, 1, &range);
+		(vk::ImageLayout)img.GetLayout(), &clearColor, 1, &range);
 }
 
 void Command::Blit(BlitInfo const& info) {
 	auto regions = info.regions;
 
 	ImageBlit const fullRegions[] = {{
-		{{0, 0, 0}, vk::Offset3D(info.dst.info.extent)},
-		{{0, 0, 0}, vk::Offset3D(info.src.info.extent)}
+		{{0, 0, 0}, Offset3DFromExtent3D(info.dst.GetExtent())},
+		{{0, 0, 0}, Offset3DFromExtent3D(info.src.GetExtent())}
 	}};
 
 	if (regions.empty()) {
@@ -271,19 +309,19 @@ void Command::Blit(BlitInfo const& info) {
 		blitRegions[i] = {
 			.pNext = nullptr,
 			.srcSubresource{
-				.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT,
+				.aspectMask     = vk::ImageAspectFlagBits::eColor,
 				.mipLevel       = 0,
 				.baseArrayLayer = 0,
 				.layerCount     = 1,
 			},
-			.srcOffsets = {vk::Offset3D(region.src.offset), vk::Offset3D(region.src.extent)},
+			.srcOffsets = {{region.src.offset, region.src.extent}},
 			.dstSubresource{
-				.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT,
+				.aspectMask     = vk::ImageAspectFlagBits::eColor,
 				.mipLevel       = 0,
 				.baseArrayLayer = 0,
 				.layerCount     = 1,
 			},
-			.dstOffsets = {vk::Offset3D(region.dst.offset), vk::Offset3D(region.dst.extent)},
+			.dstOffsets = {{region.dst.offset, region.dst.extent}},
 		};
 		++i;
 	}
@@ -291,9 +329,9 @@ void Command::Blit(BlitInfo const& info) {
 	vk::BlitImageInfo2 blitInfo {
 		.pNext          = nullptr,
 		.srcImage       = info.src,
-		.srcImageLayout = info.src.layout,
+		.srcImageLayout = info.src.GetLayout(),
 		.dstImage       = info.dst,
-		.dstImageLayout = info.dst.layout,
+		.dstImageLayout = info.dst.GetLayout(),
 		.regionCount    = static_cast<u32>(blitRegions.size()),
 		.pRegions       = blitRegions.data(),
 		.filter         = info.filter,
@@ -310,11 +348,11 @@ void Command::BeginRendering(RenderingInfo const& info) {
 	vk::Rect2D renderArea = info.render_area;
 	if (renderArea == vk::Rect2D{}) {
 		if (info.color_attachments.size() > 0) {
-			renderArea.extent.width = info.color_attachments[0].color_image.info.extent.width;
-			renderArea.extent.height = info.color_attachments[0].color_image.info.extent.height;
+			renderArea.extent.width = info.color_attachments[0].color_image.GetExtent().width;
+			renderArea.extent.height = info.color_attachments[0].color_image.GetExtent().height;
 		} else if (info.depth.image) {
-			renderArea.extent.width = info.depth.image.info.extent.width;
-			renderArea.extent.height = info.depth.image.info.extent.height;
+			renderArea.extent.width = info.depth.image.GetExtent().width;
+			renderArea.extent.height = info.depth.image.GetExtent().height;
 		}
 	}
 
@@ -324,16 +362,16 @@ void Command::BeginRendering(RenderingInfo const& info) {
 	VB_VLA(vk::RenderingAttachmentInfo, colorAttachInfos, info.color_attachments.size());
 	for (auto [i, color_attach]: util::enumerate(info.color_attachments)) {
 		colorAttachInfos[i] = {
-			.imageView   = color_attach.color_image.view,
-			.imageLayout = color_attach.color_image.layout,
+			.imageView   = color_attach.color_image.GetView(),
+			.imageLayout = color_attach.color_image.GetLayout(),
 			.loadOp      = color_attach.load_op,
 			.storeOp     = color_attach.store_op,
 			.clearValue  = *reinterpret_cast<vk::ClearValue const*>(&color_attach.clear_value),
 		};
 		if (color_attach.resolve_image) {
 			colorAttachInfos[i].resolveMode        = vk::ResolveModeFlagBits::eAverage;
-			colorAttachInfos[i].resolveImageView   = color_attach.resolve_image.view;
-			colorAttachInfos[i].resolveImageLayout = vk::ImageLayout(color_attach.resolve_image.layout);
+			colorAttachInfos[i].resolveImageView   = color_attach.resolve_image.GetView();
+			colorAttachInfos[i].resolveImageLayout = vk::ImageLayout(color_attach.resolve_image.GetLayout());
 		}
 	}
 
@@ -354,8 +392,8 @@ void Command::BeginRendering(RenderingInfo const& info) {
 	vk::RenderingAttachmentInfo depthAttachInfo;
 	if (info.depth.image) {
 		depthAttachInfo = {
-			.imageView   = info.depth.image.view,
-			.imageLayout = info.depth.image.layout,
+			.imageView   = info.depth.image.GetView(),
+			.imageLayout = info.depth.image.GetLayout(),
 			.loadOp      = info.depth.load_op,
 			.storeOp     = info.depth.store_op,
 			// .storeOp = info.depth.image.usage & vk::ImageUsageFlagBits::eTransientAttachment 
@@ -370,8 +408,8 @@ void Command::BeginRendering(RenderingInfo const& info) {
 	vk::RenderingAttachmentInfo stencilAttachInfo;
 	if (info.stencil.image) {
 		stencilAttachInfo = {
-			.imageView   = info.stencil.image.view,
-			.imageLayout = info.stencil.image.layout,
+			.imageView   = info.stencil.image.GetView(),
+			.imageLayout = info.stencil.image.GetLayout(),
 			.loadOp      = info.stencil.load_op,
 			.storeOp     = info.stencil.store_op,
 			.clearValue {
@@ -411,21 +449,21 @@ void Command::EndRendering() {
 }
 
 void Command::BindPipeline(Pipeline const& pipeline) {
-	bindPipeline(pipeline.point, pipeline);
+	bindPipeline(pipeline.GetBindPoint(), pipeline);
 }
 
 void Command::BindPipelineAndDescriptorSet(Pipeline const& pipeline, vk::DescriptorSet const& descriptor_set) {
-	bindPipeline(pipeline.point, pipeline);
+	bindPipeline(pipeline.GetBindPoint(), pipeline);
 	// TODO(nm): bind only if not compatible for used descriptor sets or push constant range
 	// ref: https://registry.khronos.org/vulkan/specs/1.2-extensions/html/vkspec.html#descriptorsets-compatibility
-	bindDescriptorSets(pipeline.point, pipeline.layout, 0, 1, &descriptor_set, 0, nullptr);
+	bindDescriptorSets(pipeline.GetBindPoint(), pipeline.GetLayout(), 0, 1, &descriptor_set, 0, nullptr);
 	// Vulkan 1.4 or VK_KHR_maintenance6
 	// vk::BindDescriptorSetsInfo{}
 	// bindDescriptorSets2()
 }
 
 void Command::PushConstants(Pipeline const& pipeline, void const* data, u32 size) {
-	pushConstants(pipeline.layout, vk::ShaderStageFlagBits::eAll, 0, size, data);
+	pushConstants(pipeline.GetLayout(), vk::ShaderStageFlagBits::eAll, 0, size, data);
 }
 
 void Command::BindVertexBuffer(Buffer const& vertex_buffer) {
@@ -462,13 +500,13 @@ void Command::Dispatch(u32 groupCountX, u32 groupCountY, u32 groupCountZ) {
 // vkResetCommandPool + vkBeginCommandBuffer
 void Command::Begin() {
 	VB_VK_RESULT result;
-	result = owner->waitForFences(1, &fence, vk::True, std::numeric_limits<u64>::max());
+	result = GetDevice().waitForFences(1, &fence, vk::True, std::numeric_limits<u64>::max());
 	VB_CHECK_VK_RESULT(result, "Failed to wait for fence");
-	result = owner->resetFences(1, &fence);
+	result = GetDevice().resetFences(1, &fence);
 	VB_CHECK_VK_RESULT(result, "Failed to reset fence");
 
 	// ?VK_COMMAND_POOL_RESET_RELEASE_RESOURCES_BIT
-	result = owner->resetCommandPool(pool, vk::CommandPoolResetFlags{});
+	result = GetDevice().resetCommandPool(pool, vk::CommandPoolResetFlags{});
 	VB_CHECK_VK_RESULT(result, "Failed to reset command pool");
 	vk::CommandBufferBeginInfo beginInfo{};
 	beginInfo.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
@@ -513,42 +551,13 @@ auto Command::GetFence() const -> vk::Fence {
 	return fence;
 }
 
-void Command::Create(u32 queueFamilyindex) {
-	vk::CommandPoolCreateInfo poolInfo {
-		// .flags = 0, // do not use VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT
-		.queueFamilyIndex = queueFamilyindex
-	};
-
-	vk::Result result;
-	std::tie(result, pool) = owner->createCommandPool(poolInfo, owner->owner->allocator);
-	VB_CHECK_VK_RESULT(result, "Failed to create command pool!");
-
-	vk::CommandBufferAllocateInfo allocInfo {
-		.level = vk::CommandBufferLevel::ePrimary,
-		.commandBufferCount = 1,
-	};
-	allocInfo.commandPool = pool;
-
-	vk::CommandBuffer commandBuffer;
-	result = owner->allocateCommandBuffers(&allocInfo, &commandBuffer);
-	VB_CHECK_VK_RESULT(result, "Failed to allocate command buffer!");
-	vk::CommandBuffer::operator=(commandBuffer);
-
-	vk::FenceCreateInfo fence_info{
-		.flags = vk::FenceCreateFlagBits::eSignaled,
-	};
-
-	std::tie(result, fence) = owner->createFence(fence_info, owner->owner->allocator);
-	VB_CHECK_VK_RESULT(result, "Failed to create fence!");
-}
-
 auto Command::GetResourceTypeName() const -> char const* { return "CommandResource"; }
 
-// auto Command::GetInstance() const -> Instance* { return owner->owner; }
+// auto Command::GetInstance() const -> Instance* { return GetDevice().owner; }
 
 void Command::Free() {
 	VB_LOG_TRACE("[ Free ] type = %s, name = %s", GetResourceTypeName(), "Command");
-	owner->destroyCommandPool(pool, owner->owner->allocator);
-	owner->destroyFence(fence, owner->owner->allocator);
+	GetDevice().destroyCommandPool(pool, GetDevice().GetAllocator());
+	GetDevice().destroyFence(fence, GetDevice().GetAllocator());
 }
 } // namespace VB_NAMESPACE

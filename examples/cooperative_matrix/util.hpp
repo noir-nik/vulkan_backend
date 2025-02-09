@@ -191,13 +191,15 @@ bool ValidateParameters(
 }
 
 template <typename AType, typename ResultType>
-[[nodiscard]] bool ValidateMultiplication(Matrix<AType> const& matA, Matrix<AType> const& matB,
+[[nodiscard]] uint32_t ValidateMultiplication(Matrix<AType> const& matA, Matrix<AType> const& matB,
 							Matrix<ResultType> const& matC, Matrix<ResultType> const& matD, ResultType const alpha,
 							ResultType const beta) {
 	uint32_t M	 = matA.rows;
 	uint32_t N	 = matB.cols;
 	uint32_t K	 = matA.cols;
 
+	uint32_t error_count = 0;
+	uint32_t kMaxPrintErrors = 3;
 	for (uint32_t i = 0; i < M; ++i) {
 		for (uint32_t j = 0; j < N; ++j) {
 			ResultType accumulator{};
@@ -207,16 +209,18 @@ template <typename AType, typename ResultType>
 			accumulator = alpha * accumulator + beta * matC(i, j);
 			ResultType d = matD(i, j);
 			if (accumulator != d) [[unlikely]] {
-				std::printf("error in [%d %d]: ", i, j);
-				PrintElement(accumulator);
-				std::printf(" != ");
-				PrintElement(d);
-				std::printf("\n");
-				return false;
+				if (error_count < kMaxPrintErrors) {
+					std::printf("error in [%d %d]: ", i, j);
+					PrintElement(accumulator);
+					std::printf(" != ");
+					PrintElement(d);
+					std::printf("\n");
+				}
+				++error_count;
 			}
 		}
 	}
-	return true;
+	return error_count;
 }
 
 template <typename T>

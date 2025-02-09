@@ -13,9 +13,26 @@ import vulkan_hpp;
 #ifdef VB_DISABLE_VK_RESULT_CHECK
 #define VB_CHECK_VK_RESULT(result, message) (void(0))
 #else
-#define VB_CHECK_VK_RESULT(result, message) \
-	CheckVkResult(result, message);
+#define VB_CHECK_VK_RESULT(result, message) CheckVkResult(result, message);
 #endif
+
+#define VB_RETURN_ON_VK_ERROR(result) \
+	if (result != vk::Result::eSuccess) { \
+		return result; \
+	}
+
+#define VB_VERIFY_VK_RESULT(result, check_enabled, message, pre_return_code) \
+	{ \
+		vk::Result local_result = result; \
+		if (local_result < vk::Result::eSuccess) { \
+			{ \
+				pre_return_code; \
+			} \
+			if (check_enabled) \
+				VB_CHECK_VK_RESULT(local_result, message); \
+			return local_result; \
+		} \
+	}
 
 VB_EXPORT
 namespace VB_NAMESPACE {

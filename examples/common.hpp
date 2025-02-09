@@ -38,7 +38,7 @@ struct TestContext {
 			  .push_constant_ranges	  = {{{
 					.stageFlags = vk::ShaderStageFlagBits::eAll,
 					.offset		= 0,
-					.size		= physical_device.GetProperties2().properties.limits.maxPushConstantsSize,
+					.size		= physical_device.GetProperties().GetCore10().limits.maxPushConstantsSize,
 				}}},
 		  })) {}
 };
@@ -51,5 +51,5 @@ if (!physical_device) return 1;
 vb::Device device(instance, physical_device, {.queues = {{{.queueFamilyIndex = physical_device->FindQueueFamilyIndex({.flags = vk::QueueFlagBits::eCompute}), .queueCount = 1}}}});
 vb::BindlessDescriptor bindless_descriptor(device, {.bindings = {{{.binding = kBindingBuffer, .descriptorType = vk::DescriptorType::eStorageBuffer, .descriptorCount = kMaxDescriptorBindings, .stageFlags = vk::ShaderStageFlagBits::eCompute}}}});
 vb::Queue const& queue(*device.GetQueue(vk::QueueFlagBits::eCompute));
-vk::PipelineLayout bindless_pipeline_layout(device.GetOrCreatePipelineLayout({.descriptor_set_layouts = {{bindless_descriptor.layout}}, .push_constant_ranges = {{{.stageFlags = vk::ShaderStageFlagBits::eAll, .offset = 0, .size = physical_device->GetProperties2().properties.limits.maxPushConstantsSize,}}}}));
+vk::PipelineLayout bindless_pipeline_layout(device.GetOrCreatePipelineLayout({.descriptor_set_layouts = {{bindless_descriptor.layout}}, .push_constant_ranges = {{{.stageFlags = vk::ShaderStageFlagBits::eAll, .offset = 0, .size = physical_device->GetProperties().GetCore10().limits.maxPushConstantsSize,}}}}));
  */

@@ -14,7 +14,7 @@ import std;
 import vulkan_hpp;
 #endif
 
-#ifndef VB_DEV
+#ifndef VB_USE_VMA_MODULE
 #include <vk_mem_alloc.h>
 #else
 import vk_mem_alloc;
@@ -30,46 +30,95 @@ import vk_mem_alloc;
 VB_EXPORT
 namespace VB_NAMESPACE {
 
-// Image handle
-using ImageRef = Image*;
-
-class Image : public vk::Image, public Named, public GpuResource, public ResourceBase<Device> {
+class Image : public vk::Image, public Named, public ResourceBase<Device> {
   public:
-	// Creates resources
+	// No-op constructor
+	Image() = default;
+
+	// RAII constructor, calls Create(info)
 	Image(Device& device, ImageInfo const& info);
+
 	// From swapchain
 	Image(vk::Image image, vk::ImageView view, Extent3D const& extent, std::string_view name = "");
-	// Frees all resources
+
+	// Calls Free
 	~Image();
 
+	// Move constructor
 	Image(Image&& other);
-	Image& operator=(Image&& other);
-	operator bool() const { return vk::Image::operator bool(); }
 
-	auto GetFormat() const -> vk::Format;
+	// Move assignment
+	Image& operator=(Image&& other);
+
+	// Get is valid
+	using vk::Image::operator bool;
+
+	// Create with result checked
+	auto Create(Device& device, ImageInfo const& info) -> vk::Result;
+
+	// Manually free resources, safe to call multiple times
+	void Free() override;
+
+	inline auto GetFormat() const -> vk::Format { return format; }
+	inline auto GetView() -> vk::ImageView& { return view; }
+	inline auto GetView() const -> vk::ImageView const& { return view; }
+	inline auto GetAllocation() const -> VmaAllocation { return allocation; }
+	inline auto GetLayout() const -> vk::ImageLayout { return layout; }
+	inline auto GetAspect() const -> vk::ImageAspectFlags { return aspect; }
+	inline auto GetExtent() const -> vk::Extent3D { return extent; }
+	inline auto GetUsage() const -> vk::ImageUsageFlags { return usage; }
+
+	// Do not call
+	inline void SetLayout(vk::ImageLayout const layout) { this->layout = layout; }
+
+	inline auto IsFromSwapchain() const -> bool { return fromSwapchain; }
+
+	auto GetDevice() const -> Device& { return *GetOwner(); }
 	auto GetResourceTypeName() const -> char const* override;
 
 	// Utility
-	void SetDebugUtilsName(char const* name);
-	void SetDebugUtilsViewName(char const* name);
-	
-	inline auto GetBinding() const -> u32 { return info.binding; }
-	inline void SetBinding(u32 binding) { info.binding = binding; }
-  private:
-  	friend Swapchain;
-	friend Device;
-	friend Command;
-	friend RenderingInfo;
-	Image() = default;
-	void Create(ImageInfo const& info);
-	void Free() override;
+	void SetDebugUtilsName(std::string_view const name);
+	void SetDebugUtilsViewName(std::string_view const name);
 
-	vk::ImageView			   view;
-	VmaAllocation			   allocation;
-	std::vector<vk::ImageView> layersView;
-	vk::ImageLayout			   layout;
-	vk::ImageAspectFlags	   aspect;
-	ImageInfo				   info;
-	bool					   fromSwapchain = false;
+	static inline auto MakeCreateInfo(vk::Format format, Extent3D const& extent, vk::ImageUsageFlags usage)
+		-> vk::ImageCreateInfo;
+
+  private:
+	vk::ImageView view;
+	VmaAllocation allocation;
+
+	vk::ImageAspectFlags aspect;
+	// From Create info
+	vk::ImageLayout     layout;
+	vk::Extent3D        extent;
+	vk::Format          format;
+	vk::ImageUsageFlags usage;
+
+	bool fromSwapchain = false;
 };
+
+class BindlessImage : public Image, public BindlessResourceBase {
+  public:
+	// No-op constructor
+	BindlessImage() = default;
+
+	// RAII constructor, calls Create
+	BindlessImage(Device& device, BindlessDescriptor& descriptor, BindlessImageInfo const& info);
+
+	// Move constructor
+	BindlessImage(BindlessImage&& other);
+
+	// Move assignment
+	BindlessImage& operator=(BindlessImage&& other);
+
+	// Calls Free
+	~BindlessImage();
+
+	// Create Manually
+	vk::Result Create(Device& device, BindlessDescriptor& descriptor, BindlessImageInfo const& info);
+
+	// Manually free resources, safe to call multiple times
+	void Free() override;
+};
+
 } // namespace VB_NAMESPACE

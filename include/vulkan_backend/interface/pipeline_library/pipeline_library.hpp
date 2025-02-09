@@ -28,7 +28,7 @@ public:
 	void Free();
 
 private:
-	Device& device = nullptr;
+	Device* device = nullptr;
 	friend Device;
 };
 } // namespace VB_NAMESPACE

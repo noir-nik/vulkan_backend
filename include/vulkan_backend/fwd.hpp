@@ -9,8 +9,8 @@ class PhysicalDevice;
 class Instance;
 // class Instance;
 class Device;
-class BindlessDescriptor;
 class Descriptor;
+class BindlessDescriptor;
 class Swapchain;
 class Buffer;
 class Image;
@@ -21,6 +21,8 @@ class PipelineLibrary;
 
 struct BufferInfo;
 struct ImageInfo;
+struct BindlessImageInfo;
+struct BindlessbufferInfo;
 struct PipelineInfo;
 struct SubmitInfo;
 struct RenderingInfo;

@@ -14,8 +14,8 @@ import vulkan_hpp;
 #include "vulkan_backend/vk_result.hpp"
 
 namespace VB_NAMESPACE {
-Queue::Queue(vk::Queue queue, Device& device, u32 family, u32 index, vk::QueueFlags flags)
-	: vk::Queue(queue), device(&device), family(family), index(index), flags(flags) {}
+// Queue::Queue(vk::Queue queue, Device& device, u32 family, u32 index, vk::QueueFlags flags)
+// 	: vk::Queue(queue), device(&device), family(family), index(index), flags(flags) {}
 
 void Queue::Submit(
 		std::span<vk::CommandBufferSubmitInfo const> cmds,

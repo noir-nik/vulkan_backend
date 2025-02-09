@@ -30,6 +30,9 @@ import vulkan_hpp;
 namespace VB_NAMESPACE {
 auto ReadBinaryFile(std::string_view const& path) -> std::vector<char> {
 	std::ifstream file(path.data(), std::ios::ate | std::ios::binary);
+	if (!file.is_open()) {
+		VB_LOG_ERROR("Failed to open file: %s", path.data());
+	}
 	VB_ASSERT(file.is_open(), "Failed to open file!");
 	std::size_t file_size = static_cast<std::size_t>(file.tellg());
 	std::vector<char> buffer(file_size);

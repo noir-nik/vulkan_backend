@@ -44,8 +44,8 @@ int main(){
 		// Get all data from Vulkan API (features, properties, available
 		// extensions, memory properties, queue families)
 		current_device.GetDetails();
-		bool supports_features = current_device.SupportsSynchronization2() &&
-								 current_device.base_features.vulkan12.runtimeDescriptorArray == vk::True;
+		bool supports_features = current_device.HasSynchronization2() &&
+								 current_device.GetFeatures().GetCore12().runtimeDescriptorArray == vk::True;
 		if (current_device.SupportsQueue(queue_info)) {
 			selected_device_index = physical_devices.size() - 1;
 			break;
@@ -65,7 +65,7 @@ int main(){
 	void* feature_chain[] = {&features2, &vulkan12_features, &vulkan13_features};
 	vb::SetupStructureChain(feature_chain);
 
-	vb::Device device(instance, physical_device,
+	vb::Device device (instance, physical_device,
 					  {.queues	  = {{{.queueFamilyIndex = physical_device.FindQueueFamilyIndex(queue_info),
 									   .queueCount		 = 1}}},
 					   .features2 = &features2});
@@ -78,8 +78,8 @@ int main(){
 								.descriptorCount = kNumGpuBuffers,
 								.stageFlags		 = vk::ShaderStageFlagBits::eCompute}}}});
 
-	vk::PipelineLayout bindless_pipeline_layout = device.GetOrCreatePipelineLayout({
-		.descriptor_set_layouts = {{bindless_descriptor.layout}},
+	vb::PipelineLayout bindless_pipeline_layout(device, {
+		.descriptor_set_layouts = {{bindless_descriptor.GetLayout()}},
 		.push_constant_ranges	= {{{
 			  .stageFlags = vk::ShaderStageFlagBits::eAll,
 			  .offset	  = 0,
@@ -99,27 +99,29 @@ int main(){
 	std::fill(std::begin(vector_b), std::end(vector_b), 1);
 
 	// Create device buffers
-	vb::BufferInfo buffer_info = {
-		.size		= kVectorSize * sizeof(int),
-		.usage		= vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferDst,
-		.memory		= vb::Memory::eGPU,
-		.descriptor = &bindless_descriptor,
-		.binding	= kBindingBuffer,
+	vb::BindlessBufferInfo bindless_buffer_info = {
+		.buffer_info{
+					 .create_info{
+				.size  = kVectorSize * sizeof(int),
+				.usage = vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferDst,
+			}, .memory = vb::Memory::eGPU,
+					 },
+		.binding = kBindingBuffer,
 	};
 
 	// Create Buffer for vector_a and vector_b
-	vb::Buffer device_buffer_a(device, buffer_info);
-	vb::Buffer device_buffer_b(device, buffer_info);
+	vb::BindlessBuffer device_buffer_a(device, bindless_descriptor, bindless_buffer_info);
+	vb::BindlessBuffer device_buffer_b(device, bindless_descriptor, bindless_buffer_info);
 
 	// Create Buffer for result of vector addition
-	buffer_info.usage = vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferSrc;
-	vb::Buffer device_buffer_result(device, buffer_info);
+	bindless_buffer_info.buffer_info.create_info.usage = vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferSrc;
+	vb::BindlessBuffer device_buffer_result(device, bindless_descriptor, bindless_buffer_info);
 
 	// Create Buffer for transfering result to CPU,
 	// we could also use staging for this
 	vb::Buffer cpu_buffer_result(device, {
-		.size   = kVectorSize * sizeof(int),
-		.usage  = vk::BufferUsageFlagBits::eTransferDst,
+		.create_info = {.size   = kVectorSize * sizeof(int),
+		.usage  = vk::BufferUsageFlagBits::eTransferDst,},
 		.memory = vb::Memory::eCPU,
 	});
 
@@ -166,13 +168,13 @@ int main(){
 	std::printf("kVectorSize       = %u\n", constants.kVectorSize);
 
 	// Create a command buffer with command pool
-	vb::Command cmd(device, queue.GetFamilyIndex());
+	vb::Command cmd = device.CreateCommand(queue.GetFamilyIndex());
 
 	// Begin command buffer
 	cmd.Begin();
 
 	// Bind created pipeline and push constants
-	cmd.BindPipelineAndDescriptorSet(pipeline, bindless_descriptor.set);
+	cmd.BindPipelineAndDescriptorSet(pipeline, bindless_descriptor.GetSet());
 	cmd.PushConstants(pipeline, &constants, sizeof(Constants));
 
 	// Copy vectors to device

@@ -54,6 +54,12 @@ auto SplitPipelineInfo(GraphicsPipelineInfo const& info) -> std::tuple<VertexInp
 	return {vertexInputInfo, pre_rasterization_info, fragment_shader_info, fragment_output_info};
 }
 
+auto Device::CreateCommand(u32 queue_family_index) -> Command {
+	Command command;
+	command.Create(*this, queue_family_index);
+	return command;
+}
+
 auto Device::CreateVertexInputInterface(VertexInputInfo const& info) -> vk::Pipeline {
 	vk::GraphicsPipelineLibraryCreateInfoEXT library_info{
 		.flags = vk::GraphicsPipelineLibraryFlagBitsEXT::eVertexInputInterface,
@@ -105,7 +111,7 @@ auto Device::CreatePreRasterizationShaders(PreRasterizationInfo const& info) -> 
 	VB_VLA(std::vector<char>, bytes, info.stages.size());
 	CreateShaderModuleInfos(info.stages, bytes.data(), shader_module_infos.data(), shader_stages.data());
 	
-	vk::PipelineDynamicStateCreateInfo dynamic_info = convert::DynamicStateInfo(info.dynamic_states);
+	vk::PipelineDynamicStateCreateInfo dynamic_info = util::DynamicStateInfo(info.dynamic_states);
 	vk::GraphicsPipelineCreateInfo pipeline_library_info {
 		.pNext               = &library_info,
 		.flags               = vk::PipelineCreateFlagBits::eLibraryKHR |

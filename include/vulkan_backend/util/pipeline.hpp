@@ -19,7 +19,7 @@ import vulkan_hpp;
 
 VB_EXPORT
 namespace VB_NAMESPACE {
-void CreateShaderModulesAndStagesInfos(Device const* device, std::span<const PipelineStage> stages,
+void CreateShaderModulesAndStagesInfos(Device const& device, std::span<const PipelineStage> stages,
 								vk::ShaderModule*				  p_shader_modules,
 								vk::PipelineShaderStageCreateInfo* p_shader_stages);
 								

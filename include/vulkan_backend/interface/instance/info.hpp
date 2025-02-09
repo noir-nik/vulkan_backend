@@ -34,6 +34,8 @@ struct InstanceCreateInfo {
 
 	// Optional allocator
 	vk::AllocationCallbacks* allocator = nullptr;
+	
+	bool check_vk_results = true;
 };
 
 } // namespace VB_NAMESPACE

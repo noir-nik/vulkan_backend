@@ -8,6 +8,7 @@ import vulkan_hpp;
 
 #include "vulkan_backend/config.hpp"
 #include "vulkan_backend/types.hpp"
+#include "vulkan_backend/fwd.hpp"
 
 VB_EXPORT
 namespace VB_NAMESPACE {

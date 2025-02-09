@@ -17,28 +17,26 @@ import vulkan_hpp;
 #include "vulkan_backend/interface/descriptor/descriptor.hpp"
 #include "vulkan_backend/types.hpp"
 
-
 VB_EXPORT
 namespace VB_NAMESPACE {
 struct ImageInfo {
-	// Necessary data
-	Extent3D			extent;
-	vk::Format			format;
-	vk::ImageUsageFlags usage;
-	// bindings to write bindless descriptor to (Only GPU)
-	BindlessDescriptor* descriptor = nullptr;
-	u32					binding;
-	// std::span<u32>               bindings;
-	vk::SampleCountFlagBits		 samples = vk::SampleCountFlagBits::e1;
-	vk::SamplerCreateInfo const& sampler = defaults::linearSampler;
-	u32							 layers	 = 1;
-	std::string_view			 name	 = "";
+	vk::ImageCreateInfo        create_info;
+	vk::ImageAspectFlags const aspect;
+	std::string_view const     name             = "";
+	bool                       check_vk_results = true;
+};
+
+struct BindlessImageInfo {
+	ImageInfo                  image_info;
+	u32 const                  binding;
+	vk::ImageLayout const      layout;
+	vk::Sampler const          sampler;
 };
 
 struct SwapchainImageInfo {
-	vk::Image		 vk_image;
-	vk::ImageView	 view;
-	Extent3D		 extent;
+	vk::Image        vk_image;
+	vk::ImageView    view;
+	Extent3D         extent;
 	std::string_view name = "";
 };
 } // namespace VB_NAMESPACE

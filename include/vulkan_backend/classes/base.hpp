@@ -1,4 +1,5 @@
 #pragma once
+#include <cassert>
 
 #ifndef VB_USE_STD_MODULE
 #include <string>
@@ -9,6 +10,7 @@ import std;
 
 #include "vulkan_backend/classes/no_copy_no_move.hpp"
 #include "vulkan_backend/config.hpp"
+#include "vulkan_backend/macros.hpp"
 
 VB_EXPORT
 namespace VB_NAMESPACE {
@@ -18,24 +20,30 @@ namespace VB_NAMESPACE {
 template <typename OwnerType> class ResourceBase : NoCopy {
   public:
 	inline ResourceBase(OwnerType* const owner = nullptr) : owner(owner) {}
+	virtual ~ResourceBase() = default;
+	
 	inline ResourceBase(ResourceBase&& other) : owner(other.owner) { other.owner = nullptr; }
 	inline auto operator=(ResourceBase&& other) -> ResourceBase& {
 		owner = std::exchange(other.owner, nullptr);
 		return *this;
 	}
-	virtual ~ResourceBase() = default;
+
+	auto GetOwner() const -> OwnerType* { return owner; }
+
 	// This should usually be overriden in derived classes for debug purposes
 	virtual auto GetResourceTypeName() const -> char const* { return "ResourceBase"; }
-	auto		 GetOwner() const -> OwnerType* { return *owner; }
 
   protected:
-	// Pointer to owner object to keep it alive
-	OwnerType* owner;
-
+	// Manually set owner with Create() function
+	void SetOwner(OwnerType* const owner) {
+		VB_ASSERT(this->owner == nullptr, "Tried to set owner on resource that already has one");
+		this->owner = owner;
+	}
   private:
 	// Called when resource or owner goes out of scope
 	// Should not be called directly
 	virtual void Free() = 0;
+	OwnerType* owner = nullptr;
 	friend OwnerType;
 };
 

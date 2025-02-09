@@ -13,23 +13,21 @@ import vulkan_hpp;
 
 #include <vulkan/vulkan.h>
 
-#include "vulkan_backend/interface/physical_device/info.hpp"
-#include "vulkan_backend/interface/instance/instance.hpp"
 #include "vulkan_backend/constants/constants.hpp"
 #include "vulkan_backend/interface/instance/info.hpp"
+#include "vulkan_backend/interface/instance/instance.hpp"
+#include "vulkan_backend/interface/physical_device/info.hpp"
 #include "vulkan_backend/interface/physical_device/physical_device.hpp"
-#include "vulkan_backend/vk_result.hpp"
 #include "vulkan_backend/log.hpp"
 #include "vulkan_backend/macros.hpp"
 #include "vulkan_backend/util/algorithm.hpp"
+#include "vulkan_backend/vk_result.hpp"
 #include "vulkan_backend/vulkan_functions.hpp"
 
 namespace VB_NAMESPACE {
-vk::Bool32 DebugUtilsCallback(
-    vk::DebugUtilsMessageSeverityFlagBitsEXT       messageSeverity,
-    vk::DebugUtilsMessageTypeFlagsEXT              messageTypes,
-    const vk::DebugUtilsMessengerCallbackDataEXT*  pCallbackData,
-    void*                                          pUserData ) {
+vk::Bool32 DebugUtilsCallback(vk::DebugUtilsMessageSeverityFlagBitsEXT      messageSeverity,
+							  vk::DebugUtilsMessageTypeFlagsEXT             messageTypes,
+							  const vk::DebugUtilsMessengerCallbackDataEXT* pCallbackData, void* pUserData) {
 	if (messageSeverity & vk::DebugUtilsMessageSeverityFlagBitsEXT::eVerbose) {
 		VB_LOG_MESSAGE(LogLevel::Trace, pCallbackData->pMessage);
 	}
@@ -45,28 +43,20 @@ vk::Bool32 DebugUtilsCallback(
 	return vk::False;
 }
 
-VkBool32 DebugUtilsCallbackCompat(
-    VkDebugUtilsMessageSeverityFlagBitsEXT           messageSeverity,
-    VkDebugUtilsMessageTypeFlagsEXT                  messageTypes,
-    const VkDebugUtilsMessengerCallbackDataEXT*      pCallbackData,
-    void*                                            pUserData) {
+VkBool32 DebugUtilsCallbackCompat(VkDebugUtilsMessageSeverityFlagBitsEXT      messageSeverity,
+								  VkDebugUtilsMessageTypeFlagsEXT             messageTypes,
+								  const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData, void* pUserData) {
 	return DebugUtilsCallback(vk::DebugUtilsMessageSeverityFlagBitsEXT(messageSeverity),
 							  vk::DebugUtilsMessageTypeFlagsEXT(messageTypes),
 							  reinterpret_cast<const vk::DebugUtilsMessengerCallbackDataEXT*>(pCallbackData), pUserData);
 }
 
-Instance::Instance(InstanceCreateInfo const& info) {
-	auto result = Create(info);
-	if (result != vk::Result::eSuccess) {
-		LogCreationError(result);
-	}
-	VB_ASSERT(result == vk::Result::eSuccess, "Failed to create instance!");
-}
+Instance::Instance() : vk::Instance{} {}
+
+Instance::Instance(InstanceCreateInfo const& info) { VB_VK_RESULT result = Create(info); }
 
 // Instance is not a owned by any other class
-Instance::~Instance() {
-	Free();
-}
+Instance::~Instance() { Free(); }
 
 void Instance::LogCreationError(vk::Result result) {
 	VB_LOG_ERROR("Failed to create instance: %s", vk::to_string(result).c_str());
@@ -78,13 +68,11 @@ auto Instance::Create(InstanceCreateInfo const& info) -> vk::Result {
 
 	// get api version
 	VB_VK_RESULT result = vk::enumerateInstanceVersion(&application_info.apiVersion);
-	VB_CHECK_VK_RESULT(result, "Failed to get api version!");
+	VB_VERIFY_VK_RESULT(result, info.check_vk_results, "Failed to get api version!", {});
 
 	auto SupportsLayer = [this](std::string_view layer) -> bool {
 		return std::any_of(available_layers.begin(), available_layers.end(),
-			[&layer](vk::LayerProperties const& availableLayer) {
-				return availableLayer.layerName == layer;
-			});
+						   [&layer](vk::LayerProperties const& availableLayer) { return availableLayer.layerName == layer; });
 	};
 
 	auto SupportsExtension = [this](std::string_view extension) -> bool {
@@ -96,9 +84,9 @@ auto Instance::Create(InstanceCreateInfo const& info) -> vk::Result {
 	};
 
 	std::tie(result, available_layers) = vk::enumerateInstanceLayerProperties();
-	VB_CHECK_VK_RESULT(result, "Failed to get available layers!");
+	VB_VERIFY_VK_RESULT(result, info.check_vk_results, "Failed to get available layers!", {});
 	std::tie(result, available_extensions) = vk::enumerateInstanceExtensionProperties();
-	VB_CHECK_VK_RESULT(result, "Failed to get available extensions!");
+	VB_VERIFY_VK_RESULT(result, info.check_vk_results, "Failed to get available extensions!", {});
 
 	if (!SupportsLayers(info.required_layers)) {
 		return vk::Result::eErrorLayerNotPresent;
@@ -110,11 +98,10 @@ auto Instance::Create(InstanceCreateInfo const& info) -> vk::Result {
 	enabled_extensions.insert(enabled_extensions.end(), info.required_extensions.begin(), info.required_extensions.end());
 
 	// Add optional layers and extensions
-	std::copy_if(info.optional_extensions.begin(), info.optional_extensions.end(),
-		std::back_inserter(enabled_extensions), SupportsExtension);
-	std::copy_if(info.optional_layers.begin(), info.optional_layers.end(),
-		std::back_inserter(enabled_layers), SupportsLayer);
-	
+	std::copy_if(info.optional_extensions.begin(), info.optional_extensions.end(), std::back_inserter(enabled_extensions),
+				 SupportsExtension);
+	std::copy_if(info.optional_layers.begin(), info.optional_layers.end(), std::back_inserter(enabled_layers), SupportsLayer);
+
 	// Check if validation layer is enabled
 	if (algo::SpanContainsString(enabled_layers, kValidationLayerName)) {
 		validation_enabled = true;
@@ -125,80 +112,72 @@ auto Instance::Create(InstanceCreateInfo const& info) -> vk::Result {
 		.messageSeverity = vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning |
 						   // vk::DebugUtilsMessageSeverityFlagBitsEXT::eVerbose |
 						   vk::DebugUtilsMessageSeverityFlagBitsEXT::eError,
-		.messageType =
-			vk::DebugUtilsMessageTypeFlagBitsEXT::eGeneral |
-			vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation |
-			vk::DebugUtilsMessageTypeFlagBitsEXT::ePerformance |
-			vk::DebugUtilsMessageTypeFlagBitsEXT::eDeviceAddressBinding,
+		.messageType = vk::DebugUtilsMessageTypeFlagBitsEXT::eGeneral | vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation |
+					   vk::DebugUtilsMessageTypeFlagBitsEXT::ePerformance |
+					   vk::DebugUtilsMessageTypeFlagBitsEXT::eDeviceAddressBinding,
 		.pfnUserCallback = DebugUtilsCallback, // The problem is here
-		.pUserData = nullptr,
+		.pUserData       = nullptr,
 	};
 
 	VkDebugUtilsMessengerCreateInfoEXT constexpr kDebugUtilsCreateInfoCompat = {
-		.sType			 = VkStructureType(kDebugUtilsCreateInfo.sType),
-		.flags			 = VkDebugUtilsMessengerCreateFlagsEXT(kDebugUtilsCreateInfo.flags),
+		.sType           = VkStructureType(kDebugUtilsCreateInfo.sType),
+		.flags           = VkDebugUtilsMessengerCreateFlagsEXT(kDebugUtilsCreateInfo.flags),
 		.messageSeverity = VkDebugUtilsMessageSeverityFlagsEXT(kDebugUtilsCreateInfo.messageSeverity),
-		.messageType	 = VkDebugUtilsMessageTypeFlagsEXT(kDebugUtilsCreateInfo.messageType),
+		.messageType     = VkDebugUtilsMessageTypeFlagsEXT(kDebugUtilsCreateInfo.messageType),
 		.pfnUserCallback = DebugUtilsCallbackCompat,
-		.pUserData		 = kDebugUtilsCreateInfo.pUserData,
+		.pUserData       = kDebugUtilsCreateInfo.pUserData,
 	};
 
 	bool bDebugUtilsEnabled = algo::SpanContainsString(enabled_extensions, vk::EXTDebugUtilsExtensionName);
 
-	std::tie(result, static_cast<vk::Instance&>(*this)) = vk::createInstance(
-		{
-			.pNext = bDebugUtilsEnabled ? &kDebugUtilsCreateInfo : nullptr,
-			.pApplicationInfo = &info.application_info,
-			.enabledLayerCount = static_cast<u32>(enabled_layers.size()),
-			.ppEnabledLayerNames = enabled_layers.data(),
-			.enabledExtensionCount = static_cast<u32>(enabled_extensions.size()),
-			.ppEnabledExtensionNames = enabled_extensions.data(),
-		},
-		allocator);
-
-	VB_CHECK_VK_RESULT(result, "Failed to create Vulkan instance!");
+	vk::InstanceCreateInfo create_info{
+		.pNext                   = bDebugUtilsEnabled ? &kDebugUtilsCreateInfo : nullptr,
+		.pApplicationInfo        = &info.application_info,
+		.enabledLayerCount       = static_cast<u32>(enabled_layers.size()),
+		.ppEnabledLayerNames     = enabled_layers.data(),
+		.enabledExtensionCount   = static_cast<u32>(enabled_extensions.size()),
+		.ppEnabledExtensionNames = enabled_extensions.data(),
+	};
+	VB_VERIFY_VK_RESULT(vk::createInstance(&create_info, allocator, this), info.check_vk_results,
+						"Failed to create Vulkan instance!", {});
 	VB_LOG_TRACE("Created instance.");
 
 	// Debug Utils
 	if (bDebugUtilsEnabled) {
 		// Only with dynamic loader
 		LoadInstanceDebugUtilsFunctionsEXT(*this);
-		std::tie(result, debug_messenger) = createDebugUtilsMessengerEXT((kDebugUtilsCreateInfo), allocator);
-		VB_CHECK_VK_RESULT(result, "Failed to set up debug messenger!");
+		result = createDebugUtilsMessengerEXT(&kDebugUtilsCreateInfo, allocator, &debug_messenger);
+		VB_VERIFY_VK_RESULT(result, info.check_vk_results, "Failed to set up debug messenger!", {
+			destroy(allocator);
+			vk::Instance::operator=(vk::Instance{});
+		});
 		VB_LOG_TRACE("Created debug messenger.");
 	}
 
 	// Layer settings
 	bool requiresLayerSettings = algo::SpanContainsString(enabled_layers, vk::EXTLayerSettingsExtensionName);
 	// todo: add layer settings extension
-	
+
 	// Get physical devices
-	CreatePhysicalDevices();
+	std::tie(result, physical_devices) = enumeratePhysicalDevices();
+	VB_VERIFY_VK_RESULT(result, info.check_vk_results, "Failed to enumerate physical devices!", {
+		if (debug_messenger) {
+			destroyDebugUtilsMessengerEXT(debug_messenger, allocator);
+			debug_messenger = nullptr;
+		}
+		destroy(allocator);
+		vk::Instance::operator=(vk::Instance{});
+	});
+	VB_ASSERT(!physical_devices.empty(), "no GPUs with Vulkan support!");
+	VB_LOG_TRACE("Found %d physical device(s).", physical_devices.size());
 	return vk::Result::eSuccess;
 }
 
-void Instance::CreatePhysicalDevices() {
-	// VB_VLA(vk::PhysicalDevice, vk_devices, physical_devices.size());
-	// std::vector<vk::PhysicalDevice> physical_devices_vk;
-	VB_VK_RESULT result;
-	std::tie(result, physical_devices) = enumeratePhysicalDevices();
-	VB_CHECK_VK_RESULT(result, "Failed to enumerate physical devices!");
-	VB_ASSERT(!physical_devices.empty(), "no GPUs with Vulkan support!");
-	VB_LOG_TRACE("Found %d physical device(s).", physical_devices.size());
-	// physical_devices.reserve(physical_devices_vk.size());
-	// for (auto& device_vk : physical_devices_vk) {
-	// 	physical_devices.emplace_back(device_vk);
-	// 	physical_devices.back().GetDetails();
-	// };
-}
-
 auto Instance::GetName() const -> char const* {
-	return application_info.pApplicationName;
+	return application_info.pApplicationName ? application_info.pApplicationName : "Vulkan Instance";
 }
 
-auto Instance::GetResourceTypeName() const -> char const* {
-	return "InstanceResource";
-}
+auto Instance::GetResourceTypeName() const -> char const* { return "InstanceResource"; }
 
 auto Instance::SetAllocator(vk::AllocationCallbacks* allocator) -> void {
 	this->allocator = allocator;
@@ -208,20 +187,22 @@ auto Instance::SetAllocator(vk::AllocationCallbacks* allocator) -> void {
 }
 
 void Instance::Free() {
-	VB_LOG_TRACE("[ Free ] Destroying instance...");
-	physical_devices.clear();
-	available_extensions.clear();
-	available_layers.clear();
-	enabled_layers.clear();
-	enabled_extensions.clear();
+	if (vk::Instance::operator bool()) {
+		VB_LOG_TRACE("[ Free ] Destroying Vulkan instance...");
+		physical_devices.clear();
+		available_extensions.clear();
+		available_layers.clear();
+		enabled_layers.clear();
+		enabled_extensions.clear();
 
-	if (debug_messenger) {
-		destroyDebugUtilsMessengerEXT(debug_messenger, allocator);
-		VB_LOG_TRACE("[ Free ] Destroyed debug messenger.");
-		debug_messenger = nullptr;
+		if (debug_messenger) {
+			destroyDebugUtilsMessengerEXT(debug_messenger, allocator);
+			VB_LOG_TRACE("[ Free ] Destroyed debug messenger.");
+			debug_messenger = nullptr;
+		}
+
+		destroy(allocator);
+		VB_LOG_TRACE("[ Free ] Destroyed Vulkan instance.");
 	}
-
-	destroy(allocator);
-	VB_LOG_TRACE("[ Free ] Destroyed instance.");
 }
 } // namespace VB_NAMESPACE

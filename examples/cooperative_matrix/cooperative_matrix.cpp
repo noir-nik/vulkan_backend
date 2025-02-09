@@ -21,16 +21,16 @@ char constexpr const* kExtensions[]		  = {vk::KHRCooperativeMatrixExtensionName,
 											 vk::NVCooperativeMatrix2ExtensionName};
 vb::QueueInfo constexpr kComputeQueueInfo = {.flags = vk::QueueFlagBits::eCompute};
 
-struct PhysicalDeviceExt : public vb::PhysicalDevice {
+struct PhysicalDevice : public vb::PhysicalDevice {
 	vk::PhysicalDeviceCooperativeMatrixFeaturesKHR	 cooperative_matrix_features{};
 	vk::PhysicalDeviceCooperativeMatrixPropertiesKHR cooperative_matrix_properties{};
 	vk::PhysicalDeviceCooperativeMatrix2FeaturesNV	 cooperative_matrix_2_features{};
 	vk::PhysicalDeviceCooperativeMatrix2PropertiesNV cooperative_matrix_properties2{};
 
-	PhysicalDeviceExt(vk::PhysicalDevice const& physical_device) : PhysicalDevice(physical_device) {
+	PhysicalDevice(vk::PhysicalDevice const& physical_device) : vb::PhysicalDevice(physical_device) {
 		// Link feature chains for GetDetails()
-		GetFeatureChain().LinkNextStructure(&cooperative_matrix_features);
-		GetFeatureChain().LinkNextStructure(&cooperative_matrix_2_features);
+		GetFeatures().LinkNextStructure(cooperative_matrix_features);
+		GetFeatures().LinkNextStructure(cooperative_matrix_2_features);
 	}
 
 	bool SupportsCooperativeMatrixFeatures() const {
@@ -51,7 +51,7 @@ struct PhysicalDeviceExt : public vb::PhysicalDevice {
 		bool is_suitable = has_extensions && has_queue && has_cooperative_matrix_features &&
 						   has_cooperative_matrix_2_features;
 		if (bVerbose) {
-			std::printf("Device: %s\n", GetProperties2().properties.deviceName.data());
+			std::printf("Device: %s\n", GetProperties().GetCore10().deviceName.data());
 			std::printf("Supports extensions: %s\n", FormatBool(has_extensions));
 			std::printf("Supports queue: %s\n", FormatBool(has_queue));
 			std::printf("Supports cooperative matrix features: %s\n",
@@ -187,9 +187,9 @@ void RunTest(TestParams const& params) {
 	}
 
 	std::printf("Validating result...\n");
-	bool bCorrect = ValidateMultiplication(matA, matB, matC, matD, ResultType(params.alpha), ResultType(params.beta));
-	std::printf("Result: %s\n", bCorrect ? "CORRECT" : "INCORRECT");
-	if (!bCorrect) {
+	uint32_t error_count = ValidateMultiplication(matA, matB, matC, matD, ResultType(params.alpha), ResultType(params.beta));
+	std::printf("Total elements: %zu, errors: %d\n", matD.GetTotalElements(), error_count);
+	if (error_count > 0) {
 		std::printf("Actual:\n");
 		PrintMatrix(matD);
 		std::printf("Expected:\n");
@@ -213,9 +213,8 @@ int main(int argc, char* argv[]) {
 
 	vb::Instance instance({.optional_layers = {{vb::kValidationLayerName}}, 
 						   .optional_extensions = {{vk::EXTDebugUtilsExtensionName}}});
-
 	int	 selected_device_index = instance.GetPhysicalDevices().size();;
-	std::vector<PhysicalDeviceExt> physical_devices;  
+	std::vector<PhysicalDevice> physical_devices;  
 	physical_devices.reserve(instance.GetPhysicalDevices().size());
 	for (auto& vk_device : instance.GetPhysicalDevices()) {
 		physical_devices.emplace_back(vk_device);
@@ -232,7 +231,7 @@ int main(int argc, char* argv[]) {
 		return 1;
 	}
 
-	PhysicalDeviceExt& physical_device = physical_devices[selected_device_index];
+	PhysicalDevice& physical_device = physical_devices[selected_device_index];
 
 	// Create device
 	vk::PhysicalDeviceFeatures2		   features2{};
@@ -268,22 +267,22 @@ int main(int argc, char* argv[]) {
 					   .extensions = kExtensions,
 					   .features2 = &features2});
 
-	vk::PipelineLayout pipeline_layout =
-		device.GetOrCreatePipelineLayout({.push_constant_ranges = {{{
+
+	vb::PipelineLayout pipeline_layout(device, {.push_constant_ranges = {{{
 											  .stageFlags = vk::ShaderStageFlagBits::eAll,
 											  .offset	  = 0,
 											  .size		  = physical_device.GetMaxPushConstantsSize(),
 										  }}}});
 
 	vb::Queue const& queue = *device.GetQueue(kComputeQueueInfo);
-	vb::Command cmd(device, queue.GetFamilyIndex());
+	vb::Command cmd = device.CreateCommand(queue.GetFamilyIndex());
 
 	// Load extension functions from dynamic library
 	vb::LoadInstanceCooperativeMatrixFunctionsKHR(instance);
 	vb::LoadInstanceCooperativeMatrix2FunctionsNV(instance);
 
-	auto [result, cooperativeMatrixProperties] = physical_device.getCooperativeMatrixPropertiesKHR();
-	vb::CheckVkResult(result, "Failed to get cooperative matrix properties");
+	auto [result_1, cooperativeMatrixProperties] = physical_device.getCooperativeMatrixPropertiesKHR();
+	vb::CheckVkResult(result_1, "Failed to get cooperative matrix properties");
 	auto [result_2, flexibleDimensionsProperties] = physical_device.getCooperativeMatrixFlexibleDimensionsPropertiesNV();
 	vb::CheckVkResult(result_2, "Failed to get cooperative matrix 2 properties");
 	if (bVerbose) {

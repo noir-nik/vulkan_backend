@@ -16,6 +16,7 @@ import vulkan_hpp;
 VB_EXPORT
 namespace VB_NAMESPACE {
 constexpr inline char const* const kValidationLayerName = "VK_LAYER_KHRONOS_validation";
+constexpr inline int kMaxObjectNameSize = 256;
 
 constexpr inline vk::PhysicalDeviceVulkan12Features kRequiredVulkan12Features{
 	// descriptor indexing

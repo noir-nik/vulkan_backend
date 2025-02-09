@@ -19,13 +19,17 @@ import vulkan_hpp;
 VB_EXPORT
 namespace VB_NAMESPACE {
 struct BufferInfo {
-	u64						size;
-	vk::BufferUsageFlags	usage;
-	vk::MemoryPropertyFlags memory = Memory::eGPU;
-	std::string_view		name   = "";
-	// binding to write bindless descriptor to (Only GPU)
-	BindlessDescriptor* descriptor = nullptr;
-	u32					binding;
+	// define size, usage;
+	vk::BufferCreateInfo    create_info;
+	vk::MemoryPropertyFlags memory           = Memory::eGPU;
+	std::string_view        name             = "";
+	bool                    check_vk_results = true;
+};
+
+struct BindlessBufferInfo {
+	BufferInfo buffer_info;
+	// binding to write bindless descriptor
+	u32 binding;
 };
 
 } // namespace VB_NAMESPACE

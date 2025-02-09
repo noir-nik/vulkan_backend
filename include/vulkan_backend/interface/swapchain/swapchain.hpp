@@ -30,7 +30,8 @@ class Swapchain : public vk::SwapchainKHR, public Named, public ResourceBase<Dev
 	Swapchain& operator=(Swapchain&& other) noexcept;
 	~Swapchain();
 
-	void Create(SwapchainInfo const& info);
+	void Create(Device& device, SwapchainInfo const& info);
+	
 	bool AcquireNextImage();
 	void SubmitAndPresent(vk::Queue const& submit, vk::Queue const& present);
 	void Recreate(u32 width, u32 height);
@@ -47,6 +48,8 @@ class Swapchain : public vk::SwapchainKHR, public Named, public ResourceBase<Dev
 	inline auto GetRenderFinishedSemaphore() -> vk::Semaphore {
 		return render_finished_semaphores[current_frame];
 	}
+	
+	auto GetDevice() const -> Device& { return *GetOwner(); }
 	auto GetResourceTypeName() const -> char const* override;
 
   private:

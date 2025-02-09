@@ -16,31 +16,15 @@ import vulkan_hpp;
 #include "vulkan_backend/interface/device/device.hpp"
 #include "vulkan_backend/interface/instance/instance.hpp"
 #include "vulkan_backend/log.hpp"
-#include "vulkan_backend/util/enumerate.hpp"
 #include "vulkan_backend/macros.hpp"
+#include "vulkan_backend/util/enumerate.hpp"
 #include "vulkan_backend/vk_result.hpp"
-
 
 namespace VB_NAMESPACE {
 
+Descriptor::Descriptor(Device& device, DescriptorInfo const& info) { Create(device, info); }
 
-void Descriptor::Free() {
-	VB_LOG_TRACE("[ Free ] type = %s, name = %s", GetResourceTypeName(), "Descriptor");
-	if (owner) {
-		owner->destroyDescriptorPool(pool, owner->GetAllocator());
-		owner->destroyDescriptorSetLayout(layout);
-	}
-}
-
-Descriptor::Descriptor(Device& device, DescriptorInfo const& info)
-	: ResourceBase(&device) {
-	Create(device, info);
-}
-
-Descriptor::~Descriptor() { Free(); }
-
-Descriptor::Descriptor(Device& device, vk::DescriptorPool pool,
-					   vk::DescriptorSetLayout layout, vk::DescriptorSet set)
+Descriptor::Descriptor(Device& device, vk::DescriptorPool pool, vk::DescriptorSetLayout layout, vk::DescriptorSet set)
 	: ResourceBase(&device), pool(pool), layout(layout), set(set) {}
 
 Descriptor::Descriptor(Descriptor&& other) noexcept
@@ -51,61 +35,69 @@ Descriptor& Descriptor::operator=(Descriptor&& other) noexcept {
 	ResourceBase::operator=(std::move(other));
 	pool   = std::exchange(other.pool, nullptr);
 	layout = std::exchange(other.layout, nullptr);
-	set	   = std::exchange(other.set, nullptr);
+	set    = std::exchange(other.set, nullptr);
 	return *this;
 }
 
-void Descriptor::Create(Device& device, DescriptorInfo const& info) {
-	VB_ASSERT(!info.bindings.empty(), "Descriptor info must have at least one binding");
-	this->owner  = &device;
-	this->pool	 = CreateDescriptorPool(info);
-	this->layout = CreateDescriptorSetLayout(info);
-	this->set	 = CreateDescriptorSets(info);
-	
+Descriptor::~Descriptor() { Free(); }
 
+auto Descriptor::Create(Device& device, DescriptorInfo const& info) -> vk::Result {
+	VB_ASSERT(!info.bindings.empty(), "Descriptor info must have at least one binding");
+	ResourceBase::SetOwner(&device);
+	VB_VERIFY_VK_RESULT(CreateDescriptorPool(info), info.check_vk_results, "Failed to create descriptor pool!", {});
+	VB_VERIFY_VK_RESULT(CreateDescriptorSetLayout(info), info.check_vk_results, "Failed to create descriptor set layout!", {
+		GetDevice().destroyDescriptorPool(pool, GetDevice().GetAllocator());
+		pool = nullptr;
+	});
+	VB_VERIFY_VK_RESULT(CreateDescriptorSets(info), info.check_vk_results, "Failed to allocate descriptor set!", {
+		GetDevice().destroyDescriptorPool(pool, GetDevice().GetAllocator());
+		GetDevice().destroyDescriptorSetLayout(layout);
+		pool   = nullptr;
+		layout = nullptr;
+		set    = nullptr;
+	});
+	return vk::Result::eSuccess;
+}
+
+void Descriptor::Free() {
+	if (pool == nullptr)
+		return;
+	VB_LOG_TRACE("[ Free ] type = %s, name = %s", GetResourceTypeName(), "Descriptor");
+	GetDevice().destroyDescriptorPool(pool, GetDevice().GetAllocator());
+	GetDevice().destroyDescriptorSetLayout(layout);
+	pool   = nullptr;
+	layout = nullptr;
+	set    = nullptr;
 }
 
 void Descriptor::SetDebugUtilsNames() {
-	owner->SetDebugUtilsName(vk::ObjectType::eDescriptorSet, &set, "DescriptorSet");
-	owner->SetDebugUtilsName(vk::ObjectType::eDescriptorPool, &pool, "DescriptorPool");
-	owner->SetDebugUtilsName(vk::ObjectType::eDescriptorSetLayout, &layout, "DescriptorSetLayout");
+	GetDevice().SetDebugUtilsName(vk::ObjectType::eDescriptorSet, &set, "DescriptorSet");
+	GetDevice().SetDebugUtilsName(vk::ObjectType::eDescriptorPool, &pool, "DescriptorPool");
+	GetDevice().SetDebugUtilsName(vk::ObjectType::eDescriptorSetLayout, &layout, "DescriptorSetLayout");
 }
 
-auto BindlessDescriptor::GetBindingInfo(u32 binding) const
-	-> vk::DescriptorSetLayoutBinding const& {
+auto BindlessDescriptor::GetBindingInfo(u32 binding) const -> vk::DescriptorSetLayoutBinding const& {
 	auto it = bindings.find(binding);
 	VB_ASSERT(it != bindings.end(), "Descriptor binding not found");
 	return it->second;
 }
 
-auto Descriptor::CreateDescriptorPool(DescriptorInfo const& info) -> vk::DescriptorPool {
-	std::vector<vk::DescriptorPoolSize> pool_sizes(info.bindings.size());
-	// std::transform(info.bindings.begin(), info.bindings.end(), pool_sizes.begin(),
-	// 			   [](const auto& binding_info) {
-	// 				   return vk::DescriptorPoolSize{
-	// 					   static_cast<vk::DescriptorType>(binding_info.descriptorType),
-	// 					   binding_info.descriptorCount};
-	// 			   });
+auto Descriptor::CreateDescriptorPool(DescriptorInfo const& info) -> vk::Result {
+	VB_VLA(vk::DescriptorPoolSize, pool_sizes, info.bindings.size());
 	for (auto [i, binding_info] : util::enumerate(info.bindings)) {
-		pool_sizes[i] = {static_cast<vk::DescriptorType>(binding_info.descriptorType),
-						 binding_info.descriptorCount};
+		pool_sizes[i] = {static_cast<vk::DescriptorType>(binding_info.descriptorType), binding_info.descriptorCount};
 	}
 	vk::DescriptorPoolCreateInfo poolInfo = {
-		.flags		   = info.pool_flags,
-		.maxSets	   = 1,
+		.flags         = info.pool_flags,
+		.maxSets       = 1,
 		.poolSizeCount = static_cast<u32>(pool_sizes.size()),
-		.pPoolSizes	   = pool_sizes.data(),
+		.pPoolSizes    = pool_sizes.data(),
 	};
 
-	// std::tie(result, pool) = owner->createDescriptorPool(poolInfo,
-	// owner->GetAllocator());
-	auto [result, descriptorPool] =
-		owner->createDescriptorPool(poolInfo, owner->GetAllocator());
-	VB_CHECK_VK_RESULT(result, "Failed to create descriptor pool!");
-	return descriptorPool;
+	return GetDevice().createDescriptorPool(&poolInfo, GetDevice().GetAllocator(), &pool);
 }
 
-auto Descriptor::CreateDescriptorSetLayout(DescriptorInfo const& info) -> vk::DescriptorSetLayout {
+auto Descriptor::CreateDescriptorSetLayout(DescriptorInfo const& info) -> vk::Result {
 	// fill unspecified flags with zero
 	VB_VLA(vk::DescriptorBindingFlags, binding_flags, info.bindings.size());
 	auto end = std::copy_n(info.binding_flags.begin(), info.binding_flags.size(), binding_flags.begin());
@@ -117,33 +109,47 @@ auto Descriptor::CreateDescriptorSetLayout(DescriptorInfo const& info) -> vk::De
 	};
 
 	vk::DescriptorSetLayoutCreateInfo layoutInfo = {
-		.pNext		  = &bindingFlagsInfo,
-		.flags		  = info.layout_flags,
+		.pNext        = &bindingFlagsInfo,
+		.flags        = info.layout_flags,
 		.bindingCount = static_cast<u32>(info.bindings.size()),
-		.pBindings	  = info.bindings.data(),
+		.pBindings    = info.bindings.data(),
 	};
 
-	auto [result, descriptorSetLayout] = owner->createDescriptorSetLayout(layoutInfo, nullptr);
-	VB_CHECK_VK_RESULT(result, "Failed to create descriptor set layout!");
-	return descriptorSetLayout;
+	return GetDevice().createDescriptorSetLayout(&layoutInfo, GetDevice().GetAllocator(), &layout);
 }
 
-auto Descriptor::CreateDescriptorSets(DescriptorInfo const& info) -> vk::DescriptorSet {
+auto Descriptor::CreateDescriptorSets(DescriptorInfo const& info) -> vk::Result {
 	vk::DescriptorSetAllocateInfo setInfo{
-		.descriptorPool		= pool,
+		.descriptorPool     = pool,
 		.descriptorSetCount = 1,
-		.pSetLayouts		= &layout,
+		.pSetLayouts        = &layout,
 	};
 
-	// auto [result, descriptorSet] = owner->allocateDescriptorSets(setInfo);
-	vk::DescriptorSet descriptorSet;
-	VB_VK_RESULT	  result = owner->allocateDescriptorSets(&setInfo, &descriptorSet);
-	VB_CHECK_VK_RESULT(result, "Failed to allocate descriptor set!");
-	return descriptorSet;
+	return GetDevice().allocateDescriptorSets(&setInfo, &set);
 }
 
 BindlessDescriptor::BindlessDescriptor(Device& device, DescriptorInfo const& info) : Descriptor(device, info) {
 	Create(device, info);
+}
+
+BindlessDescriptor::BindlessDescriptor(BindlessDescriptor&& other)
+	: Descriptor(std::move(other)) {
+	bindings = std::move(other.bindings);
+}
+
+BindlessDescriptor& BindlessDescriptor::operator=(BindlessDescriptor&& other) {
+	if (this != &other) {
+		Descriptor::operator=(std::move(other));
+		bindings = std::move(other.bindings);
+	}
+	return *this;
+}
+
+BindlessDescriptor::~BindlessDescriptor() { Free(); }
+
+void BindlessDescriptor::Free() {
+	Descriptor::Free();
+	bindings.clear();
 }
 
 void BindlessDescriptor::Create(Device& device, DescriptorInfo const& info) {

@@ -30,10 +30,9 @@ class Queue : public vk::Queue {
 	auto GetFamilyIndex() const -> u32;
 	auto GetIndex() const -> u32;
 	auto GetFlags() const -> vk::QueueFlags;
-
-	Queue(vk::Queue queue, Device& device, u32 family, u32 index, vk::QueueFlags flags);
-
+	
   private:
+	// Queue(vk::Queue queue, Device& device, u32 family, u32 index, vk::QueueFlags flags);
 	using vk::Queue::operator=;
 	friend Swapchain;
 	friend Command;

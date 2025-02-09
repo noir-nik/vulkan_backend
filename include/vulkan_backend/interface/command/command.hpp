@@ -28,10 +28,27 @@ using CommandRef = Command*;
 
 class Command : public vk::CommandBuffer, public ResourceBase<Device> {
 public:
-	Command(Device& device, u32 queueFamilyindex);
+	// No-op constructor
+	Command();
+	
+	// RAII constructor, calls Create
+	Command(Device& device, u32 queue_family_index);
+
+	// Create with result checked
+	auto Create(Device& device, u32 queue_family_index, bool check_vk_results = true) -> vk::Result;
+	
+	// Create with result returned
+	[[nodiscard]] vk::Result CreateWithResult(Device& device, u32 queue_family_index);
+	
+	// Move constructor
 	Command(Command&& other);
+
+	// Move assignment
 	Command& operator=(Command&& other);
+
+	// Destructor, frees resources
 	~Command();
+
 	bool Copy(Image      const& dst, StagingBuffer& staging, const void* data, u32 size);
 	bool Copy(vk::Buffer const& dst, StagingBuffer& staging, const void* data, u32 size, u32 dst_offset = 0);
 	void Copy(vk::Buffer const& dst, vk::Buffer const& src,  u32 size, u32 dst_offset = 0, u32 src_offset = 0);
@@ -68,14 +85,11 @@ public:
 	void Submit(vk::Queue const& queue, SubmitInfo const& info = {});
 	auto GetFence() const  -> vk::Fence;
 
+	auto GetDevice() const -> Device& { return *GetOwner(); }
 	auto GetResourceTypeName() const-> char const* override;
-protected:
-	Command() = default;
 private:
 	friend Swapchain;
 	friend Device;
-
-	void Create(u32 queueFamilyindex);
 	void Free() override;
 
 	vk::CommandPool pool  = nullptr;

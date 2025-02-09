@@ -18,7 +18,7 @@ import vulkan_hpp;
 #include "vulkan_backend/vk_result.hpp"
 
 namespace VB_NAMESPACE {
-void CreateShaderModulesAndStagesInfos(Device const* device, std::span<const PipelineStage> stages,
+void CreateShaderModulesAndStagesInfos(Device const& device, std::span<const PipelineStage> stages,
 						vk::ShaderModule*				   p_shader_modules,
 						vk::PipelineShaderStageCreateInfo* p_shader_stages) {
 	for (auto [i, stage] : util::enumerate(stages)) {
@@ -31,7 +31,7 @@ void CreateShaderModulesAndStagesInfos(Device const* device, std::span<const Pip
 			.pCode	  = reinterpret_cast<const u32*>(bytes.data()),
 		};
 		VB_VK_RESULT result =
-			device->createShaderModule(&createInfo, device->GetAllocator(), &p_shader_modules[i]);
+			device.createShaderModule(&createInfo, device.GetAllocator(), &p_shader_modules[i]);
 		VB_CHECK_VK_RESULT(result, "Failed to create shader module!");
 		
 		// Create shader stage info

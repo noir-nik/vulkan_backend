@@ -11,7 +11,8 @@ import std;
 import vulkan_hpp;
 #endif
 
-#include "vulkan_backend/types.hpp"
+#include "vulkan_backend/config.hpp"
+
 
 VB_EXPORT
 namespace VB_NAMESPACE {
@@ -25,12 +26,12 @@ namespace VB_NAMESPACE {
 // 	vk::DescriptorPoolCreateFlags pool_flags = vk::DescriptorPoolCreateFlagBits::eUpdateAfterBind;
 // };
 
-
 struct DescriptorInfo {
 	std::span<vk::DescriptorSetLayoutBinding const> bindings;
 	// If binding_flags.size() < bindings.size(), the rest will be filled with zero
 	std::span<vk::DescriptorBindingFlags const> binding_flags;
-	vk::DescriptorPoolCreateFlags pool_flags;
-	vk::DescriptorSetLayoutCreateFlags layout_flags;
+	vk::DescriptorPoolCreateFlags               pool_flags;
+	vk::DescriptorSetLayoutCreateFlags          layout_flags;
+	bool check_vk_results = true;
 };
 } // namespace VB_NAMESPACE

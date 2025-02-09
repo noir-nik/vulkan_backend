@@ -24,9 +24,8 @@ import vulkan_hpp;
 #include <vulkan/vulkan.h>
 
 namespace VB_NAMESPACE {
-Swapchain::Swapchain(Device& device, SwapchainInfo const& info)
-	: ResourceBase(&device), info(info) {
-	Create(info);
+Swapchain::Swapchain(Device& device, SwapchainInfo const& info) {
+	Create(device, info);
 }
 
 Swapchain::~Swapchain() { Free(); }
@@ -63,6 +62,7 @@ Swapchain& Swapchain::operator=(Swapchain&& other) noexcept {
 	}
 	return *this;
 }
+
 bool Swapchain::AcquireNextImage() {
 	// auto result = acquireNextImageKHR(
 	// 	handle,
@@ -72,7 +72,7 @@ bool Swapchain::AcquireNextImage() {
 	// 	&current_image_index
 	// );
 	VB_VK_RESULT result;
-	std::tie(result, current_image_index) = owner->acquireNextImage2KHR({
+	std::tie(result, current_image_index) = GetDevice().acquireNextImage2KHR({
 		.swapchain = *this,
 		.timeout = std::numeric_limits<u64>::max(),
 		.semaphore = GetImageAvailableSemaphore(),
@@ -135,12 +135,12 @@ void Swapchain::Recreate(u32 width, u32 height) {
 	VB_ASSERT(width > 0 && height > 0, "Window size is 0, swapchain NOT to be recreated");
 	VB_VK_RESULT result;
 	for (auto& cmd: commands) {
-		result = owner->waitForFences(1, &cmd.fence, vk::True, std::numeric_limits<u32>::max());
+		result = GetDevice().waitForFences(1, &cmd.fence, vk::True, std::numeric_limits<u32>::max());
 		VB_CHECK_VK_RESULT(result, "Failed to wait for fence!");
 	}
 
 	for (auto& image : images) {
-		owner->destroyImageView(image.view, owner->GetAllocator());
+		GetDevice().destroyImageView(image.GetView(), GetDevice().GetAllocator());
 	}
 	images.clear();
 	CreateSurfaceFormats();
@@ -177,7 +177,7 @@ auto Swapchain::GetExtent() const -> vk::Extent2D {
 
 bool Swapchain::SupportsFormat(vk::Format format, vk::ImageTiling tiling, vk::FormatFeatureFlags features) {
 	vk::FormatProperties props;
-	owner->physical_device->getFormatProperties(format, &props);
+	GetDevice().GetPhysicalDevice().getFormatProperties(format, &props);
 
 	if (tiling == vk::ImageTiling::eLinear && (props.linearTilingFeatures & features) == features) {
 		return true;
@@ -221,24 +221,24 @@ auto Swapchain::ChooseExtent(vk::Extent2D const& desired_extent) -> vk::Extent2D
 void Swapchain::CreateSurfaceFormats() {
 	// get capabilities
 	VB_VK_RESULT result;
-	result = owner->physical_device->getSurfaceCapabilitiesKHR(info.surface, &surface_capabilities);
+	result = GetDevice().GetPhysicalDevice().getSurfaceCapabilitiesKHR(info.surface, &surface_capabilities);
 
 	// get surface formats
 	u32 formatCount;
-	result = owner->physical_device->getSurfaceFormatsKHR(info.surface, &formatCount, nullptr);
+	result = GetDevice().GetPhysicalDevice().getSurfaceFormatsKHR(info.surface, &formatCount, nullptr);
 	if (formatCount != 0) {
 		available_surface_formats.clear();
 		available_surface_formats.resize(formatCount);
-		result = owner->physical_device->getSurfaceFormatsKHR(info.surface, &formatCount, available_surface_formats.data());
+		result = GetDevice().GetPhysicalDevice().getSurfaceFormatsKHR(info.surface, &formatCount, available_surface_formats.data());
 	}
 
 	// get present modes
 	u32 modeCount;
-	result = owner->physical_device->getSurfacePresentModesKHR(info.surface, &modeCount, nullptr);
+	result = GetDevice().GetPhysicalDevice().getSurfacePresentModesKHR(info.surface, &modeCount, nullptr);
 	if (modeCount != 0) {
 		available_present_modes.clear();
 		available_present_modes.resize(modeCount);
-		result = owner->physical_device->getSurfacePresentModesKHR(info.surface, &modeCount, available_present_modes.data());
+		result = GetDevice().GetPhysicalDevice().getSurfacePresentModesKHR(info.surface, &modeCount, available_present_modes.data());
 	}
 
 	// set this device as not suitable if no surface formats or present modes available
@@ -295,17 +295,17 @@ void Swapchain::CreateSwapchain() {
 		.oldSwapchain = *this,
 	};
 
-	VB_VK_RESULT result = owner->createSwapchainKHR(&createInfo, owner->GetAllocator(), this);
+	VB_VK_RESULT result = GetDevice().createSwapchainKHR(&createInfo, GetDevice().GetAllocator(), this);
 	VB_CHECK_VK_RESULT(result, "Failed to create swap chain!");	
-	owner->destroySwapchainKHR(createInfo.oldSwapchain, owner->GetAllocator());
+	GetDevice().destroySwapchainKHR(createInfo.oldSwapchain, GetDevice().GetAllocator());
 }
 
 void Swapchain::CreateImages() {
 	u32 imageCount;
 	VB_VK_RESULT result;
-	result = owner->getSwapchainImagesKHR(*this, &imageCount, nullptr);
+	result = GetDevice().getSwapchainImagesKHR(*this, &imageCount, nullptr);
 	VB_VLA(vk::Image, vk_images, imageCount);
-	result = owner->getSwapchainImagesKHR(*this, &imageCount, vk_images.data());
+	result = GetDevice().getSwapchainImagesKHR(*this, &imageCount, vk_images.data());
 
 	// Create image views
 	images.clear();
@@ -328,11 +328,11 @@ void Swapchain::CreateImages() {
 				.layerCount = 1,
 			}
 		};
-		VB_VK_RESULT result = owner->createImageView(&viewInfo, owner->GetAllocator(), &images.back().view);
+		VB_VK_RESULT result = GetDevice().createImageView(&viewInfo, GetDevice().GetAllocator(), &images.back().GetView());
 		VB_CHECK_VK_RESULT(result, "Failed to create SwapChain image view!");
 
 		// Add debug names
-		if (owner->GetInstance().IsDebugUtilsEnabled()) {
+		if (GetDevice().GetInstance().IsDebugUtilsEnabled()) {
 			images.back().SetDebugUtilsName(image_name);
 			VB_FORMAT_WITH_SIZE(view_name, 512, "%s%s", image_name, "View");
 			images.back().SetDebugUtilsViewName(image_name);
@@ -348,21 +348,24 @@ void Swapchain::CreateSemaphores() {
 
 	for (size_t i = 0; i < info.frames_in_flight; ++i) {
 		VB_VK_RESULT
-		result = owner->createSemaphore(&semaphoreInfo, owner->GetAllocator(), &image_available_semaphores[i]);
+		result = GetDevice().createSemaphore(&semaphoreInfo, GetDevice().GetAllocator(), &image_available_semaphores[i]);
 		VB_CHECK_VK_RESULT(result, "Failed to create semaphore!");
-		result = owner->createSemaphore(&semaphoreInfo, owner->GetAllocator(), &render_finished_semaphores[i]);
+		result = GetDevice().createSemaphore(&semaphoreInfo, GetDevice().GetAllocator(), &render_finished_semaphores[i]);
 		VB_CHECK_VK_RESULT(result, "Failed to create semaphore!");
 	}
 }
 
 void Swapchain::CreateCommands(u32 queueFamilyindex) {
+	commands.clear();
+	commands.resize(info.frames_in_flight);
 	for (u32 i = 0; i < info.frames_in_flight; ++i) {
-		commands.emplace_back(*owner, queueFamilyindex);
+		commands[i].Create(GetDevice(), queueFamilyindex);
 	}
 }
 
-void Swapchain::Create(SwapchainInfo const& init_info) {
+void Swapchain::Create(Device& device, SwapchainInfo const& init_info) {
 	// this is a necessary hackery
+	ResourceBase::SetOwner(&device);
 	this->info = init_info;
 	CreateSurfaceFormats();
 	auto [format, colorSpace] = ChooseSurfaceFormat({
@@ -391,18 +394,18 @@ void Swapchain::Free() {
 	VB_LOG_TRACE("[ Free ] type = %s, name = %s", GetResourceTypeName(), GetName().data());
 	VB_VK_RESULT result;
 	for (auto& cmd: commands) {
-		result = owner->waitForFences(1, &cmd.fence, vk::True, std::numeric_limits<u32>::max());
+		result = GetDevice().waitForFences(1, &cmd.fence, vk::True, std::numeric_limits<u32>::max());
 		VB_CHECK_VK_RESULT(result, "Failed to wait for fence!");
 	}
 
 	for (auto& image : images) {
-		owner->destroyImageView(image.view, owner->GetAllocator());
+		GetDevice().destroyImageView(image.GetView(), GetDevice().GetAllocator());
 	}
 	images.clear();
 
 	for (size_t i = 0; i < info.frames_in_flight; i++) {
-		owner->destroySemaphore(image_available_semaphores[i], owner->GetAllocator());
-		owner->destroySemaphore(render_finished_semaphores[i], owner->GetAllocator());
+		GetDevice().destroySemaphore(image_available_semaphores[i], GetDevice().GetAllocator());
+		GetDevice().destroySemaphore(render_finished_semaphores[i], GetDevice().GetAllocator());
 	}
 	commands.clear();
 	image_available_semaphores.clear();
@@ -410,10 +413,10 @@ void Swapchain::Free() {
 	available_present_modes.clear();
 	available_surface_formats.clear();
  
-	owner->destroySwapchainKHR(*this, owner->GetAllocator());
+	GetDevice().destroySwapchainKHR(*this, GetDevice().GetAllocator());
 
 	if (info.destroy_surface) {
-		owner->GetInstance().destroySurfaceKHR(info.surface, owner->GetAllocator());
+		GetDevice().GetInstance().destroySurfaceKHR(info.surface, GetDevice().GetAllocator());
 	}
 	vk::SwapchainKHR::operator=(nullptr);
 	info.surface = nullptr;

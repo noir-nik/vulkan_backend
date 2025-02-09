@@ -35,12 +35,6 @@ struct Source  {
 	bool operator==(Source const& other) const { return data == other.data && type == other.type; }
 };
 
-template<typename T>
-struct SpecializationInfo {
-	std::span<vk::SpecializationMapEntry const> entries;
-	T& data;
-};
-
 struct PipelineStage {
 	enum class Flags {
 		kNone = 0,
@@ -84,18 +78,6 @@ struct PipelineStage {
 		return stage == other.stage && source == other.source &&
 			   entry_point == other.entry_point && compile_options == other.compile_options &&
 			   specialization_info == other.specialization_info;
-	}
-};
-
-struct PipelineLayoutInfo {
-	std::span<vk::DescriptorSetLayout const> descriptor_set_layouts;
-	std::span<vk::PushConstantRange const>   push_constant_ranges;
-
-	bool operator==(PipelineLayoutInfo const& other) const {
-		return std::equal(descriptor_set_layouts.begin(), descriptor_set_layouts.end(),
-						  other.descriptor_set_layouts.begin(), other.descriptor_set_layouts.end()) &&
-			   std::equal(push_constant_ranges.begin(), push_constant_ranges.end(),
-						  other.push_constant_ranges.begin(), other.push_constant_ranges.end());
 	}
 };
 

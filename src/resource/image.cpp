@@ -11,7 +11,7 @@ import std;
 import vulkan_hpp;
 #endif
 
-#ifndef VB_DEV
+#ifndef VB_USE_VMA_MODULE
 #include <vk_mem_alloc.h>
 #else
 import vk_mem_alloc;
@@ -19,6 +19,7 @@ import vk_mem_alloc;
 
 #include <vulkan/vulkan.h>
 
+#include "vulkan_backend/constants/constants.hpp"
 #include "vulkan_backend/interface/descriptor/descriptor.hpp"
 #include "vulkan_backend/interface/device/device.hpp"
 #include "vulkan_backend/interface/image/image.hpp"
@@ -29,192 +30,166 @@ import vk_mem_alloc;
 #include "vulkan_backend/util/format.hpp"
 #include "vulkan_backend/vk_result.hpp"
 
-
 namespace VB_NAMESPACE {
-Image::Image(Device& device, ImageInfo const& info)
-	: Named(info.name), ResourceBase(&device), info(info) {
-	VB_LOG_TRACE("[ Create ] type = %s, name = %s", GetResourceTypeName(), GetName().data());
-	Create(info);
-}
+Image::Image(Device& device, ImageInfo const& info) { Create(device, info); }
 
-Image::Image(vk::Image image, vk::ImageView view, Extent3D const& extent, std::string_view name) : vk::Image(image), Named(name),
-	view(view), layout(vk::ImageLayout::eUndefined), aspect(vk::ImageAspectFlagBits::eColor), fromSwapchain(true) {
-		info.extent = extent;
-	}
+Image::Image(vk::Image image, vk::ImageView view, Extent3D const& extent, std::string_view name)
+	: vk::Image(image), Named(name), view(view), layout(vk::ImageLayout::eUndefined), aspect(vk::ImageAspectFlagBits::eColor),
+	  fromSwapchain(true) {
+	this->extent = extent;
+}
 
 Image::Image(Image&& other)
 	: vk::Image(std::exchange(static_cast<vk::Image&>(other), {})), Named(std::move(other)),
-		GpuResource(std::move(other)), ResourceBase<Device>(std::exchange(other.owner, {})),
-		view(std::exchange(other.view, {})), allocation(std::exchange(other.allocation, {})),
-		layersView(std::move(other.layersView)), layout(std::exchange(other.layout, {})),
-		aspect(std::move(other.aspect)), info(std::move(other.info)),
-		fromSwapchain(std::exchange(other.fromSwapchain, false)) {}
+	  ResourceBase<Device>(std::move(other)), view(std::exchange(other.view, {})),
+	  allocation(std::exchange(other.allocation, {})), layout(std::move(other.layout)), aspect(std::move(other.aspect)),
+	  extent(std::move(other.extent)), format(std::move(other.format)), usage(std::move(other.usage)),
+	  fromSwapchain(std::move(other.fromSwapchain)) {}
 
 Image& Image::operator=(Image&& other) {
 	if (this != &other) {
 		Free();
 		vk::Image::operator=(std::exchange(static_cast<vk::Image&>(other), {}));
 		Named::operator=(std::move(other));
-		GpuResource::operator=(std::exchange(static_cast<GpuResource&>(other), {}));
 		ResourceBase::operator=(std::move(other));
-		view = std::exchange(other.view, {});
+		view       = std::exchange(other.view, {});
 		allocation = std::exchange(other.allocation, {});
-		layersView = std::move(other.layersView);
-		layout = std::exchange(other.layout, {});
-		aspect = std::move(other.aspect);
-		info.~ImageInfo();
-		new (&info) ImageInfo(std::move(other.info));
-		fromSwapchain = std::exchange(other.fromSwapchain, false);
+		layout     = std::move(other.layout);
+		aspect     = std::move(other.aspect);
+
+		extent        = std::move(other.extent);
+		format        = std::move(other.format);
+		usage         = std::move(other.usage);
+		fromSwapchain = std::move(other.fromSwapchain);
 	}
 	return *this;
 }
 
 Image::~Image() { Free(); }
 
-auto Image::GetFormat() const -> vk::Format { return info.format; }
-
 auto Image::GetResourceTypeName() const -> char const* { return "ImageResource"; }
 
-void Image::Create(ImageInfo const& info) {
-	vk::ImageCreateInfo imageInfo{
-		.flags =
-			info.layers == 6 ? vk::ImageCreateFlagBits::eCubeCompatible : vk::ImageCreateFlags{},
-		.imageType	   = vk::ImageType::e2D,
-		.format		   = vk::Format(info.format),
-		.extent		   = info.extent,
-		.mipLevels	   = 1,
-		.arrayLayers   = info.layers,
-		.samples	   = std::min(info.samples, owner->physical_device->max_samples),
-		.tiling		   = vk::ImageTiling::eOptimal,
-		.usage		   = info.usage,
-		.sharingMode   = vk::SharingMode::eExclusive,
-		.initialLayout = vk::ImageLayout::eUndefined,
-	};
+auto Image::Create(Device& device, ImageInfo const& info) -> vk::Result {
+	VB_LOG_TRACE("[ Create ] type = %s, name = %s", GetResourceTypeName(), GetName().data());
+	ResourceBase::SetOwner(&device);
+	SetName(info.name);
+	this->extent = info.create_info.extent;
+	this->format = info.create_info.format;
+	this->usage  = info.create_info.usage;
+	this->layout = info.create_info.initialLayout;
+	this->aspect = info.aspect;
 
 	VmaAllocationCreateInfo allocInfo = {
-		.usage = VMA_MEMORY_USAGE_AUTO,
-		.preferredFlags =
-			VkMemoryPropertyFlags(info.usage & vk::ImageUsageFlagBits::eTransientAttachment
-									  ? VK_MEMORY_PROPERTY_LAZILY_ALLOCATED_BIT
-									  : 0),
+		.usage          = VMA_MEMORY_USAGE_AUTO,
+		.preferredFlags = VkMemoryPropertyFlags(
+			info.create_info.usage & vk::ImageUsageFlagBits::eTransientAttachment ? VK_MEMORY_PROPERTY_LAZILY_ALLOCATED_BIT : 0),
 	};
 
-	VB_LOG_TRACE("[ vmaCreateImage ] extent = %ux%ux%u, layers = %u name = %s",
-				 info.extent.width, info.extent.height, info.extent.depth, info.layers, detail::FormatName(info.name).data());
-	VB_VK_RESULT result = vk::Result(vmaCreateImage(
-		owner->vma_allocator, reinterpret_cast<VkImageCreateInfo*>(&imageInfo), &allocInfo,
-		reinterpret_cast<VkImage*>(static_cast<vk::Image*>(this)), &allocation, nullptr));
-	VB_CHECK_VK_RESULT(vk::Result(result), "Failed to create image!");
-
-	constexpr auto AspectFromFormat = [](vk::Format const f) -> vk::ImageAspectFlags {
-		switch (f) {
-		case vk::Format::eD24UnormS8Uint: // Invalid, cannot be both stencil and depth,
-										  // todo: create separate imageview
-			return vk::ImageAspectFlags(vk::ImageAspectFlagBits::eDepth |
-										vk::ImageAspectFlagBits::eStencil);
-		case vk::Format::eD32Sfloat:
-		case vk::Format::eD16Unorm:
-			return vk::ImageAspectFlagBits::eDepth;
-		default:
-			return vk::ImageAspectFlagBits::eColor;
-		}
-	};
-	aspect = AspectFromFormat(info.format);
+	VB_LOG_TRACE("[ vmaCreateImage ] extent = %ux%ux%u, layers = %u name = %s", info.create_info.extent.width, info.create_info.extent.height,
+				 info.create_info.extent.depth, info.create_info.arrayLayers, detail::FormatName(info.name).data());
+	VB_VK_RESULT result =
+		vk::Result(vmaCreateImage(GetDevice().GetVmaAllocator(), reinterpret_cast<VkImageCreateInfo const*>(&info), &allocInfo,
+								  reinterpret_cast<VkImage*>(static_cast<vk::Image*>(this)), &allocation, nullptr));
+	VB_VERIFY_VK_RESULT(vk::Result(result), info.check_vk_results, "Failed to create image!", {});
 
 	vk::ImageViewCreateInfo viewInfo{
-		.image	  = *this,
-		.viewType = info.layers == 1 ? vk::ImageViewType::e2D : vk::ImageViewType::eCube,
-		.format	  = info.format,
-		.subresourceRange{.aspectMask	  = vk::ImageAspectFlags(aspect),
-						  .baseMipLevel	  = 0,
-						  .levelCount	  = 1,
+		.image    = *this,
+		.viewType = info.create_info.arrayLayers == 1 ? vk::ImageViewType::e2D : vk::ImageViewType::eCube,
+		.format   = info.create_info.format,
+		.subresourceRange{.aspectMask     = aspect,
+						  .baseMipLevel   = 0,
+						  .levelCount     = info.create_info.mipLevels,
 						  .baseArrayLayer = 0,
-						  .layerCount	  = info.layers}
-	};
+						  .layerCount     = info.create_info.arrayLayers}
+    };
 
 	// TODO(nm): Create image view only if usage if Sampled or Storage or other fitting
-	result = owner->createImageView(&viewInfo, owner->GetAllocator(), &view);
-	VB_CHECK_VK_RESULT(result, "Failed to create image view!");
+	result = GetDevice().createImageView(&viewInfo, GetDevice().GetAllocator(), &view);
+	VB_VERIFY_VK_RESULT(result, info.check_vk_results, "Failed to create image view!",
+						{ vmaDestroyImage(GetDevice().GetVmaAllocator(), *this, allocation); });
 
-	if (info.layers > 1) {
-		viewInfo.subresourceRange.layerCount = 1;
-		layersView.resize(info.layers);
-		for (u32 i = 0; i < info.layers; i++) {
-			viewInfo.viewType						 = vk::ImageViewType::e2D;
-			viewInfo.subresourceRange.baseArrayLayer = i;
-			result =
-				owner->createImageView(&viewInfo, owner->GetAllocator(), &layersView[i]);
-			VB_CHECK_VK_RESULT(result, "Failed to create image view!");
-		}
-	}
-	if (info.descriptor != nullptr) {
-		SetResourceID(info.descriptor->PopID(info.binding));
-
-		vk::ImageLayout newLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
-		if (info.usage & vk::ImageUsageFlagBits::eSampled) {
-
-			if (TestBits(aspect, vk::ImageAspectFlagBits::eDepth)) [[unlikely]] {
-				newLayout = vk::ImageLayout::eDepthReadOnlyOptimal;
-			}
-
-			if (TestBits(aspect, vk::ImageAspectFlagBits::eDepth |
-									 vk::ImageAspectFlagBits::eStencil)) [[unlikely]] {
-				newLayout = vk::ImageLayout::eDepthStencilReadOnlyOptimal;
-			}
-		}
-		if (info.usage & vk::ImageUsageFlagBits::eStorage) {
-			newLayout = vk::ImageLayout::eGeneral;
-		}
-
-		vk::DescriptorImageInfo descriptorInfo = {
-			.sampler	 = owner->GetOrCreateSampler(info.sampler),
-			.imageView	 = view,
-			.imageLayout = (vk::ImageLayout)newLayout,
-		};
-
-		vk::WriteDescriptorSet write = {
-			.dstSet			 = info.descriptor->set,
-			.dstBinding		 = info.binding,
-			.dstArrayElement = GetResourceID(),
-			.descriptorCount = 1,
-			.descriptorType	 = info.descriptor->GetBindingInfo(info.binding).descriptorType,
-			.pImageInfo		 = &descriptorInfo,
-		};
-		owner->updateDescriptorSets(write, {});
-	} else {
-		if (info.usage & vk::ImageUsageFlagBits::eSampled ||
-			info.usage & vk::ImageUsageFlagBits::eStorage) {
-			VB_LOG_WARN("Gpu image created without descriptor write");
+	if (GetDevice().GetInstance().IsDebugUtilsEnabled()) {
+		SetDebugUtilsName(info.name.data());
+		constexpr char const* kViewNameSuffix = "View";
+		if (info.name.empty()) {
+			SetDebugUtilsViewName(kViewNameSuffix);
+		} else {
+			char view_name[kMaxObjectNameSize];
+			std::snprintf(view_name, kMaxObjectNameSize - 1, "%s%s", info.name.data(), kViewNameSuffix);
+			SetDebugUtilsViewName(view_name);
 		}
 	}
 
-	SetDebugUtilsName(info.name.data());
-	char const* kViewNameSuffix = "View";
-	VB_FORMAT_WITH_SIZE(view_name, 512, "%s%s", info.name.data(), kViewNameSuffix);
-	SetDebugUtilsViewName(view_name);
+	return vk::Result::eSuccess;
 }
 
-void Image::SetDebugUtilsName(char const* name) {
-	owner->SetDebugUtilsName(vk::ObjectType::eImage, static_cast<vk::Image*>(this), name);
+void Image::SetDebugUtilsName(std::string_view const name) {
+	GetDevice().SetDebugUtilsName(vk::ObjectType::eImage, static_cast<vk::Image*>(this), name.data());
 }
 
-void Image::SetDebugUtilsViewName(char const* name) {
-	owner->SetDebugUtilsName(vk::ObjectType::eImageView, &view, name);
+void Image::SetDebugUtilsViewName(std::string_view const name) {
+	GetDevice().SetDebugUtilsName(vk::ObjectType::eImageView, &view, name.data());
 }
 
 void Image::Free() {
+	if (!vk::Image::operator bool())
+		return;
 	VB_LOG_TRACE("[ Free ] type = %s, name = %s", GetResourceTypeName(), detail::FormatName(GetName()).data());
 	if (!fromSwapchain) {
-		for (VkImageView layerView : layersView) {
-			owner->destroyImageView(layerView, owner->GetAllocator());
-		}
-		layersView.clear();
-		owner->destroyImageView(view, owner->GetAllocator());
-		vmaDestroyImage(owner->vma_allocator, *this, allocation);
-		if (GetResourceID() != kNullID) {
-			info.descriptor->PushID(GetBinding(), GetResourceID());
-		}
+		GetDevice().destroyImageView(view, GetDevice().GetAllocator());
+		vmaDestroyImage(GetDevice().GetVmaAllocator(), *this, allocation);
+		vk::Image::operator=(nullptr);
+		view = vk::ImageView{};
 	}
+}
+
+BindlessImage::BindlessImage(Device& device, BindlessDescriptor& descriptor, BindlessImageInfo const& info) { Create(device, descriptor, info); }
+
+BindlessImage::BindlessImage(BindlessImage&& other) {
+	Image::operator=(std::move(other));
+	BindlessResourceBase::operator=(std::move(other));
+}
+
+BindlessImage& BindlessImage::operator=(BindlessImage&& other) {
+	if (this != &other) {
+		Image::operator=(std::move(other));
+		BindlessResourceBase::operator=(std::move(other));
+	}
+	return *this;
+}
+
+BindlessImage::~BindlessImage() { Free(); }
+
+auto BindlessImage::Create(Device& device, BindlessDescriptor& descriptor, BindlessImageInfo const& info) -> vk::Result {
+	VB_VERIFY_VK_RESULT(vb::Image::Create(device, info.image_info), false, "Failed to create image!", {});
+
+	// Bind to get resource id
+	BindlessResourceBase::Bind(descriptor, info.binding);
+	
+	// Update bindless descriptor
+	vk::DescriptorImageInfo descriptorInfo = {
+		.sampler     = info.sampler,
+		.imageView   = GetView(),
+		.imageLayout = info.layout,
+	};
+
+	vk::WriteDescriptorSet write = {
+		.dstSet          = descriptor.GetSet(),
+		.dstBinding      = info.binding,
+		.dstArrayElement = GetResourceID(),
+		.descriptorCount = 1,
+		.descriptorType  = descriptor.GetBindingInfo(info.binding).descriptorType,
+		.pImageInfo      = &descriptorInfo,
+	};
+	GetDevice().updateDescriptorSets(write, {});
+	return vk::Result::eSuccess;
+}
+
+void BindlessImage::Free() {
+	if (BindlessResourceBase::IsBound()) {
+		BindlessResourceBase::Release();
+	}
+	Image::Free();
 }
 
 } // namespace VB_NAMESPACE

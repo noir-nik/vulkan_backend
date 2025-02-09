@@ -5,6 +5,7 @@
 
 .vscode/
 .vscode/*
+CMakeFiles
 
 build/
 

@@ -13,7 +13,7 @@ import std;
 import vulkan_hpp;
 #endif
 
-#ifndef VB_DEV
+#ifndef VB_USE_VMA_MODULE
 #include <vk_mem_alloc.h>
 #else
 import vk_mem_alloc;
@@ -26,4 +26,3 @@ namespace VB_NAMESPACE {
 VmaAllocationCreateFlags constexpr inline kBufferCpuFlags = {
 	VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT};
 } // namespace VB_NAMESPACE
-
